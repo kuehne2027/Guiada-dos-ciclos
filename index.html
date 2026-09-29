@@ -888,7 +888,7 @@ function CarrierBlock({gkey,list,ondas,note,vagas}){
 
 /* ============ GUIADA ONLINE · página pública somente leitura ============ */
 const GUIADA_CFG_KEY="svc-guiada-online-config";
-function getGuiadaCfg(){try{const saved=JSON.parse(localStorage.getItem(GUIADA_CFG_KEY)||"{}")||{};return {url:saved.url||"https://cjentgthseecgjzptyqe.supabase.co",key:saved.key||"sb_publishable_ca35t-HrAIN5fpJk45P8FQ_10xWlHIV",viewer:saved.viewer||"guiada.html",slug:saved.slug||"megario"}}catch(e){return {url:"https://cjentgthseecgjzptyqe.supabase.co",key:"sb_publishable_ca35t-HrAIN5fpJk45P8FQ_10xWlHIV",viewer:"guiada.html",slug:"megario"}}}
+function getGuiadaCfg(){try{const saved=JSON.parse(localStorage.getItem(GUIADA_CFG_KEY)||"{}")||{};return {url:saved.url||"https://cjentqthseecgizptyqe.supabase.co",key:saved.key||"sb_publishable_ca35t-HrAIN5fpJk45P8FQ_10xWlHIV",viewer:saved.viewer||"guiada.html",slug:saved.slug||"megario"}}catch(e){return {url:"https://cjentqthseecgizptyqe.supabase.co",key:"sb_publishable_ca35t-HrAIN5fpJk45P8FQ_10xWlHIV",viewer:"guiada.html",slug:"megario"}}}
 function setGuiadaCfg(v){try{localStorage.setItem(GUIADA_CFG_KEY,JSON.stringify(v||{}))}catch(e){}}
 function guiadaPayload(cur,ciclo,items){
   return {layout:cur,ciclo,updated_at:new Date().toISOString(),ruas:buildRuas(items).map(s=>({n:s.n,title:s.title,sub:s.sub,count:s.count,carriers:s.carriers.map(c=>({k:c.k,name:c.name,routes:c.routes.map(r=>({rota:gName(r),vaga:r.vaga||null,sacas:gSacas(r)?gSacas(r).split(/\s*,\s*/).filter(Boolean):[],qtd_sacas:(r.children||[]).length}))}))}))};
