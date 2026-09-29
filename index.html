@@ -345,26 +345,44 @@ function distributeRoutes(map,tags){
   return {tags:res,placed,left};
 }
 
+const API_MODEL_DEF="claude-sonnet-5-5";
+async function fileToB64(f){const url=URL.createObjectURL(f);try{const im=await new Promise((r,j)=>{const m=new Image();m.onload=()=>r(m);m.onerror=j;m.src=url});
+  const mx=2400,k=Math.min(1,mx/Math.max(im.naturalWidth,im.naturalHeight));const c=document.createElement("canvas");c.width=Math.round(im.naturalWidth*k);c.height=Math.round(im.naturalHeight*k);
+  const g=c.getContext("2d");g.fillStyle="#fff";g.fillRect(0,0,c.width,c.height);g.drawImage(im,0,0,c.width,c.height);return c.toDataURL("image/png").split(",")[1]}finally{URL.revokeObjectURL(url)}}
+async function apiRead(files,key,model,signal){
+  const content=[];for(const f of files)content.push({type:"image",source:{type:"base64",media_type:"image/png",data:await fileToB64(f)}});
+  content.push({type:"text",text:READ_PROMPT});
+  const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",signal,headers:{"x-api-key":key,"anthropic-version":"2023-06-01","content-type":"application/json","anthropic-dangerous-direct-browser-access":"true"},
+    body:JSON.stringify({model:model||API_MODEL_DEF,max_tokens:6000,messages:[{role:"user",content}]})});
+  const j=await r.json().catch(()=>null);
+  if(!r.ok){const m=j?.error?.message||("HTTP "+r.status);throw {code:r.status===401?"api_key":r.status===404||/model/i.test(m)?"api_model":r.status===429?"rate_limited":"api",message:m}}
+  const t=(j?.content||[]).map(c=>c.text||"").join("");const a=t.indexOf("{"),b=t.lastIndexOf("}");if(a<0||b<a)throw {code:"invalid_json"};
+  return JSON.parse(t.slice(a,b+1))}
 function ReadModal({cur,onClose,onApply}){
   const [files,setFiles]=useState([]);const [busy,setBusy]=useState(false);const [err,setErr]=useState("");const [res,setRes]=useState(null);
   const [target,setTarget]=useState(cur);const [dist,setDist]=useState(true);const [avail,setAvail]=useState(null);const ctl=useRef(null);
   const thumbs=useMemo(()=>files.map(f=>URL.createObjectURL(f)),[files]);
   useEffect(()=>()=>thumbs.forEach(u=>URL.revokeObjectURL(u)),[thumbs]);
+  const [key,setKeyRaw]=useState(()=>{try{return localStorage.getItem("svc-anth-key")||""}catch(e){return ""}});
+  const [model,setModelRaw]=useState(()=>{try{return localStorage.getItem("svc-anth-model")||API_MODEL_DEF}catch(e){return API_MODEL_DEF}});
+  const setKey=v=>{setKeyRaw(v);try{localStorage.setItem("svc-anth-key",v)}catch(e){}};const setModel=v=>{setModelRaw(v);try{localStorage.setItem("svc-anth-model",v)}catch(e){}};
+  const [cfgOpen,setCfgOpen]=useState(false);
   useEffect(()=>{let ok=true;(async()=>{try{const s=window.claude?.use?await window.claude.use("sample"):null;if(!s){ok&&setAvail(false);return}
       const lim=await s.limits().catch(()=>null);ok&&setAvail(!!lim?.images)}catch(e){ok&&setAvail(false)}})();return()=>{ok=false}},[]);
+  const useApi=avail===false;const canRead=avail===true||(useApi&&key.trim().length>20);
   useEffect(()=>{const onP=e=>{const fs=[...(e.clipboardData?.files||[])].filter(f=>f.type.startsWith("image/"));if(fs.length){e.preventDefault();setFiles(p=>[...p,...fs].slice(0,4));setRes(null)}};
     window.addEventListener("paste",onP);return()=>window.removeEventListener("paste",onP)},[]);
   const add=list=>{const fs=[...list].filter(f=>f.type.startsWith("image/"));if(fs.length){setFiles(p=>[...p,...fs].slice(0,4));setRes(null);setErr("")}};
   const read=async()=>{setErr("");setBusy(true);setRes(null);ctl.current=new AbortController();
-    try{const s=await window.claude.use("sample");
-      const out=await s.json(READ_PROMPT,{images:files,modelTier:"complex",signal:ctl.current.signal,cache:false});
+    try{let out;if(useApi){out=await apiRead(files,key.trim(),model.trim(),ctl.current.signal)}else{const s=await window.claude.use("sample");
+      out=await s.json(READ_PROMPT,{images:files,modelTier:"complex",signal:ctl.current.signal,cache:false})}
       const vagas={},gaiolas={};let n=0;
       Object.entries(out?.vagas||{}).forEach(([v,k])=>{v=+v;k=String(k||"").toUpperCase().trim();if(v>=1&&v<=97){vagas[v]=CARRIERS[k]&&k!=="V"?k:"V";n++}});
       Object.entries(out?.gaiolas||{}).forEach(([v,t])=>{v=+v;t=String(t||"").trim().toUpperCase();if(v>=1&&v<=97&&t)gaiolas[v]=t});
       if(!n)throw {code:"empty"};
       const cic=LAYOUTS[out?.ciclo]?out.ciclo:null;if(cic)setTarget(cic);
       setRes({vagas,gaiolas,duvidas:(out?.duvidas||[]).map(Number).filter(x=>x>=1&&x<=97),titulo:out?.titulo||"",ciclo:cic})}
-    catch(e){const c=e&&e.code;setErr(c==="cancelled"?"Leitura cancelada.":c==="not_granted"||c==="sampling_disabled"?"A leitura pelo Claude não foi liberada nesta página.":c==="rate_limited"?"Muitas leituras seguidas ou limite de uso atingido. Tente de novo daqui a pouco.":c==="image_rejected"?"Essa imagem não foi aceita. Tente um print PNG ou JPG.":c==="invalid_json"||c==="empty"?"Não consegui entender o desenho. Tente um print mais nítido, só da área do layout.":"Não deu para ler agora. Tente de novo.")}
+    catch(e){const c=e&&(e.name==="AbortError"?"cancelled":e.code);setErr(c==="api_key"?"A chave da API não foi aceita. Confira se copiou inteira (começa com sk-ant-).":c==="api_model"?"O modelo não foi aceito ("+(e.message||"")+"). Troque o nome do modelo nas configurações.":c==="api"?"A API respondeu com erro: "+(e.message||""):c==="cancelled"?"Leitura cancelada.":c==="not_granted"||c==="sampling_disabled"?"A leitura pelo Claude não foi liberada nesta página.":c==="rate_limited"?"Muitas leituras seguidas ou limite de uso atingido. Tente de novo daqui a pouco.":c==="image_rejected"?"Essa imagem não foi aceita. Tente um print PNG ou JPG.":c==="invalid_json"||c==="empty"?"Não consegui entender o desenho. Tente um print mais nítido, só da área do layout.":"Não deu para ler agora. Tente de novo.")}
     finally{setBusy(false)}};
   const planC=(()=>{let src=null;try{src=JSON.parse(localStorage.getItem("svc-plan2")||"null")}catch(e){}if(src&&src.empty)return null;if(!src||!src.rows)src=parseDefault();return src&&src.map?detectCiclo(src.title||"",src.rows,src.map):null})();
   const counts=res?(()=>{const c={};Object.values(res.vagas).forEach(k=>c[k]=(c[k]||0)+1);return c})():{};
@@ -373,7 +391,17 @@ function ReadModal({cur,onClose,onApply}){
     <${motion.div} onClick=${e=>e.stopPropagation()} initial=${{y:24}} animate=${{y:0}} exit=${{y:24,opacity:0}} transition=${spring} class=${box} style=${{background:"rgba(16,20,26,.97)"}}>
       <div class="flex items-center justify-between gap-3"><div><div class="text-[11px] uppercase tracking-[.16em] text-muted font-semibold">Ler desenho do layout</div><div class="font-display text-lg">Mande o print e o app monta o layout</div></div>
         <button type="button" onClick=${onClose} disabled=${busy} class="text-muted hover:text-ink text-sm px-3 py-1.5 rounded-full border border-white/15">Fechar</button></div>
-      ${avail===false&&html`<p class="text-sm rounded-2xl px-3 py-2" style=${{background:"rgba(255,181,71,.1)",color:"var(--amber)"}}>A leitura do desenho usa o Claude e só funciona abrindo o app pelo link dele no Claude. No arquivo baixado no computador ela não fica disponível.</p>`}
+      ${useApi&&html`<div class="rounded-2xl px-3 py-3 text-sm flex flex-col gap-2" style=${{background:key?"rgba(52,211,153,.08)":"rgba(255,181,71,.1)",color:key?"#5ee6b0":"var(--amber)"}}>
+        <div>${key?"Leitura pela API da Anthropic (chave salva neste navegador).":"Fora do Claude (arquivo ou GitHub) a leitura usa a API da Anthropic. Cole sua chave uma vez: ela fica salva só neste navegador."}
+          <button type="button" onClick=${()=>setCfgOpen(!cfgOpen)} class="underline underline-offset-2 ml-1 text-ink">${key?(cfgOpen?"fechar":"trocar chave"):""}</button></div>
+        ${(!key||cfgOpen)&&html`<div class="flex flex-col gap-2 text-ink">
+          <label for="anthKey" class="text-xs text-muted">Chave da API (crie em console.anthropic.com › API Keys › Create Key; começa com sk-ant-)</label>
+          <input id="anthKey" type="password" value=${key} onInput=${e=>setKey(e.target.value.trim())} placeholder="sk-ant-..." autocomplete="off" class="bg-white/5 border border-line rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-[var(--accent)]"/>
+          <label for="anthModel" class="text-xs text-muted">Modelo</label>
+          <input id="anthModel" value=${model} onInput=${e=>setModel(e.target.value)} class="bg-white/5 border border-line rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-[var(--accent)]"/>
+          <p class="text-[11px] text-muted">A chave é sua: cada leitura custa alguns centavos na sua conta da Anthropic. Não compartilhe este navegador com a chave salva.</p>
+        </div>`}
+      </div>`}
       ${!res&&html`<div class="rounded-2xl border border-dashed border-white/20 p-4 flex flex-col sm:flex-row sm:items-center gap-3" onDragOver=${e=>e.preventDefault()} onDrop=${e=>{e.preventDefault();add(e.dataTransfer.files)}}>
         <div class="flex-1 text-sm"><div class="font-semibold">Arraste o print, cole com Ctrl+V ou escolha o arquivo</div><div class="text-muted text-xs mt-1">Até 4 imagens. Se o layout for muito largo, mande em 2 partes (esquerda e direita) para as gaiolas ficarem legíveis.</div></div>
         <label for="readFile" class="cursor-pointer text-sm font-semibold px-4 py-2 rounded-full bg-white text-black text-center">Escolher imagem</label>
@@ -382,7 +410,7 @@ function ReadModal({cur,onClose,onApply}){
       ${files.length>0&&!res&&html`<div class="flex flex-wrap gap-2">${thumbs.map((u,i)=>html`<div key=${u} class="relative"><img src=${u} alt=${"Desenho "+(i+1)} class="h-24 rounded-xl border border-line bg-white"/>
         <button type="button" onClick=${()=>setFiles(files.filter((_,j)=>j!==i))} class="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-black/80 text-xs" aria-label="Tirar imagem">×</button></div>`)}</div>`}
       ${!res&&html`<div class="flex flex-wrap items-center gap-2">
-        <${motion.button} ...${tactile} type="button" id="readBtn" disabled=${!files.length||busy||avail===false} onClick=${read} class=${"text-sm font-semibold px-5 py-2.5 rounded-full "+(files.length&&!busy&&avail!==false?"":"opacity-40")} style=${{background:"var(--accent)",color:"#04121b"}}>${busy?"Lendo o desenho…":"Ler desenho"}</${motion.button}>
+        <${motion.button} ...${tactile} type="button" id="readBtn" disabled=${!files.length||busy||!canRead} onClick=${read} class=${"text-sm font-semibold px-5 py-2.5 rounded-full "+(files.length&&!busy&&canRead?"":"opacity-40")} style=${{background:"var(--accent)",color:"#04121b"}}>${busy?"Lendo o desenho…":"Ler desenho"}</${motion.button}>
         ${busy&&html`<button type="button" onClick=${()=>ctl.current?.abort()} class="text-sm text-muted hover:text-ink">Parar</button><span class="text-xs text-muted">Pode levar até 1 minuto.</span>`}
       </div>`}
       ${busy&&html`<div class="sk h-2 w-full"></div>`}
