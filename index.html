@@ -980,7 +980,15 @@ function GuiadaModal({cur,ciclo,items,onClose}){
   const [blobs,setBlobs]=useState(null);const [urls,setUrls]=useState([]);const [msg,setMsg]=useState("");
   const [onlineCfg,setOnlineCfg]=useState(()=>getGuiadaCfg());const [cfgOpen,setCfgOpen]=useState(false);const [publishing,setPublishing]=useState(false);
   const saveOnline=(k,v)=>{const n={...onlineCfg,[k]:v};setOnlineCfg(n);setGuiadaCfg(n)};
-  const publishOnline=async()=>{setPublishing(true);setMsg("Publicando Guiada...");try{const r=await publishGuiadaOnline(cur,ciclo,items);setMsg("Guiada publicada. O link mostra somente as Guiadas e atualiza com a publicação mais recente.");const base=String(r.viewer||"guiada.html");const sep=base.includes("?")?"&":"?";const link=base+sep+"g="+encodeURIComponent(r.slug);try{await navigator.clipboard.writeText(link);setMsg("Guiada publicada e link copiado: "+link)}catch(e){setMsg("Guiada publicada: "+link)}}catch(e){setMsg(e&&e.code==="config"?"Configure Supabase e o endereço do guiada.html em ⚙ Guiada online.":"Não consegui publicar a Guiada. Confira a configuração do Supabase.")}finally{setPublishing(false)}};
+  const publishOnline=async()=>{setPublishing(true);setMsg("Publicando Guiada...");try{const r=await publishGuiadaOnline(cur,ciclo,items);setMsg("Guiada publicada. O link mostra somente as Guiadas e atualiza com a publicação mais recente.");const base=String(r.viewer||"guiada.html");const sep=base.includes("?")?"&":"?";const link=base+sep+"g="+encodeURIComponent(r.slug);try{await navigator.clipboard.writeText(link);setMsg("Guiada publicada e link copiado: "+link)}catch(e){setMsg("Guiada publicada: "+link)}}catch(e){
+    if(e&&e.code==="config"){
+      setMsg("Configure Supabase e o endereço do guiada.html em ⚙ Guiada online.");
+    }else{
+      const detalhe=String((e&&e.message)||e||"Erro desconhecido").replace(/\s+/g," ").trim();
+      setMsg("ERRO SUPABASE: "+detalhe);
+      try{console.error("Erro ao publicar Guiada:",e)}catch(_){}
+    }
+  }finally{setPublishing(false)}};
   useEffect(()=>{let us=[],ok=true;renderGuiadaPages(cur,ciclo,items).then(bs=>{if(!ok)return;us=bs.map(b=>URL.createObjectURL(b));setBlobs(bs);setUrls(us)});return()=>{ok=false;us.forEach(u=>URL.revokeObjectURL(u))}},[]);
   const base=`guiada-${ciclo}-${new Date().toLocaleDateString("pt-BR").replace(/\//g,"-")}`;
   const text=guiadaText(cur,ciclo,items);const autoN=items.filter(r=>r.auto).length;
