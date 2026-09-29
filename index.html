@@ -1,0 +1,1070 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Layouts do SVC</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=Onest:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config={theme:{extend:{fontFamily:{display:['Unbounded','system-ui','sans-serif'],sans:['Onest','system-ui','sans-serif'],mono:['"JetBrains Mono"','ui-monospace','monospace']},
+colors:{ink:'var(--ink)',muted:'var(--muted)',line:'var(--line)',accent:'var(--accent)',glass:'var(--glass)'}}}}
+</script>
+<style>
+/* Layout: nav fixa translúcida (estilo Apple) → Bento Grid de vidro sobre fundo com gradientes suaves; planta do galpão como bloco principal */
+:root{
+  --bg:#07090d; --ink:#eef2f5; --muted:#8c97a3; --line:rgba(255,255,255,.09); --glass:rgba(22,27,34,.55);
+  --accent:#4cc3ff; --amber:#ffb547;
+  color-scheme:dark;
+}
+html,body{background:var(--bg);color:var(--ink)}
+body{font-family:Onest,system-ui,sans-serif;min-height:100%;overflow-x:hidden}
+.aurora{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+.aurora i{position:absolute;border-radius:50%;filter:blur(90px);opacity:.28}
+.aurora i:nth-child(1){width:46vw;height:46vw;left:-12vw;top:-14vw;background:#0e6d9c}
+.aurora i:nth-child(2){width:38vw;height:38vw;right:-10vw;top:18vh;background:#b86b12;opacity:.16}
+.aurora i:nth-child(3){width:50vw;height:40vw;left:30vw;bottom:-22vw;background:#123f7a;opacity:.3}
+.grain{position:fixed;inset:0;z-index:0;pointer-events:none;background-image:radial-gradient(rgba(255,255,255,.035) 1px,transparent 1px);background-size:22px 22px}
+.glass{background:var(--glass);backdrop-filter:blur(18px) saturate(140%);-webkit-backdrop-filter:blur(18px) saturate(140%);border:1px solid var(--line)}
+.sk{background:linear-gradient(90deg,rgba(255,255,255,.04) 0%,rgba(255,255,255,.1) 50%,rgba(255,255,255,.04) 100%);background-size:200% 100%;animation:sh 1.2s linear infinite;border-radius:10px}
+@keyframes sh{to{background-position:-200% 0}}
+.tnum{font-variant-numeric:tabular-nums}
+button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.spin{animation:spin 6s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+.noscroll::-webkit-scrollbar{display:none}.noscroll{scrollbar-width:none}
+@media (prefers-reduced-motion:reduce){.sk,.spin{animation:none}}
+</style>
+
+<div class="aurora"><i></i><i></i><i></i></div>
+<div class="grain"></div>
+<div id="root" class="relative z-10"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/framer-motion@11.11.17/dist/framer-motion.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>
+/* ============ DADOS ============ */
+const CARRIERS={
+  AL:{n:"ALC",bg:"#111111",fg:"#ffffff"},
+  EC:{n:"ECO EXPRESS",bg:"#f6e2c0",fg:"#1b1b1b"},
+  MS:{n:"M.J SIMÕES",bg:"#8a8a8a",fg:"#ffffff"},
+  HW:{n:"HAWK",bg:"#16357a",fg:"#ffffff"},
+  ME:{n:"MELI EXTRA",bg:"#f4c7ad",fg:"#1b1b1b"},
+  PL:{n:"PRALOG",bg:"#7b5ea7",fg:"#ffffff"},
+  OT:{n:"ONTIME",bg:"#ffef2e",fg:"#1b1b1b"},
+  PC:{n:"PARCEIRO",bg:"#ffffff",fg:"#1b1b1b"},
+  KG:{n:"KANGU",bg:"#f39200",fg:"#1b1b1b"},
+  DL:{n:"DELUNA",bg:"#4f7a2e",fg:"#ffffff"},
+  CM:{n:"COOPMETRO",bg:"#22e024",fg:"#1b1b1b"},
+  DC:{n:"DECARGO",bg:"#22e6ea",fg:"#1b1b1b"},
+  PY:{n:"PY",bg:"#b8860b",fg:"#ffffff"},
+  X:{n:"Bloqueada",bg:"#e5262a",fg:"#ffffff"},
+  V:{n:"Vazia",bg:"#e9ecef",fg:"#8a929b"}
+};
+function fill(o,a,b,code,s=1){if(a<=b){for(let i=a;i<=b;i+=s)o[i]=code}else{for(let i=a;i>=b;i-=s)o[i]=code}return o}
+const build=steps=>{const o={};steps.forEach(st=>fill(o,...st));return o};
+const LAYOUTS={
+  "AM0-CHP":{map:build([[1,31,"X",2],[2,4,"AL",2],[6,8,"CM",2],[10,20,"KG",2],[22,26,"MS",2],[28,34,"X",2],
+    [35,43,"HW"],[44,44,"X"],[45,49,"OT"],[50,50,"X"],[51,52,"DC"],[53,53,"X"],[54,54,"EC"],[55,55,"X"],[56,56,"DL"],[57,65,"X"],
+    [88,76,"X"],[75,75,"DL"],[74,72,"EC"],[71,71,"OT"],[70,69,"PC"],[68,67,"HW"],[66,66,"CM"],[89,97,"X"]]),
+    tags:{},veh:{top:"Passeio",bot:"VUC",right:"VUC"}},
+  "AM":{map:build([[1,31,"ME",2],[2,8,"PC",2],[10,22,"KG",2],[24,34,"ME",2],
+    [35,38,"PC"],[39,45,"DL"],[46,49,"MS"],[50,54,"AL"],[55,60,"DC"],[61,65,"X"],
+    [88,79,"HW"],[78,74,"CM"],[73,73,"PY"],[72,69,"EC"],[68,66,"OT"],[89,97,"X"]]),
+    tags:{},veh:{top:"Passeio",bot:"Passeio",right:"VUC"}},
+  "PM":{map:build([[1,9,"DC",2],[11,17,"MS",2],[19,23,"EC",2],[25,31,"CM",2],[2,4,"KG",2],[6,6,"PY"],[8,14,"OT",2],[16,22,"DL",2],[24,34,"PC",2],
+    [35,39,"KG"],[40,65,"ME"],
+    [88,83,"HW"],[82,81,"AL"],[80,77,"DL"],[76,76,"DC"],[75,75,"OT"],[74,74,"EC"],[73,72,"PC"],[71,66,"HW"],[89,97,"HW"]]),
+    tags:{},veh:{top:"Passeio",bot:"VUC",right:"VUC"}},
+  "SD":{map:build([[1,31,"X",2],[2,6,"DC",2],[8,8,"EC"],[10,14,"OT",2],[16,20,"MS",2],[22,34,"HW",2],
+    [35,37,"PC"],[38,40,"DL"],[41,42,"CM"],[43,50,"KG"],[51,65,"X"],[88,66,"X"],[89,97,"X"]]),
+    tags:{},
+    tagBelow:true,veh:{top:"Passeio",bot:"—",right:"VUC"}}
+};
+const rua=v=>v<=34?(v%2?1:2):v<=65?3:v<=88?5:4;
+const area=v=>["","Rua 1 · coluna esquerda (ímpares)","Rua 2 · coluna esquerda (pares)","Rua 3 · ao lado da esteira","Rua 4 · lado direito (VUC)","Rua 5 · frente do mezanino (expedição VUC)"][rua(v)];
+const vehOf=(L,v)=>v<=34?"—":v<=65?L.veh.top:v<=88?L.veh.bot:L.veh.right;
+const SZ=36,STEP=42;
+function pos(v){
+  if(v<=34){const r=Math.floor((v-1)/2);return{x:v%2?40:86,y:98+r*STEP}}
+  if(v<=65)return{x:128+(v-35)*STEP,y:56};
+  if(v<=88)return{x:204+(88-v)*STEP,y:606};
+  return{x:1320,y:250+(v-89)*STEP};
+}
+const BLOCKS_DEF={
+  rampaS:{x:10,y:8,w:80,h:40,t:"RAMPA\nSAÍDA"},rampaU:{x:1300,y:130,w:98,h:40,t:"RAMPA ↑"},rampaU1:{x:1300,y:760,w:98,h:44,t:"RAMPA ↑ 1"},
+  est1:{x:250,y:214,w:1000,h:24,t:"ESTEIRA"},est2:{x:250,y:296,w:1000,h:24,t:"ESTEIRA"},mez:{x:250,y:388,w:480,h:58,t:"MEZANINO"},
+  exp:{x:190,y:592,w:986,h:66,t:"",dashed:true}};
+const TAGS_DEF={1:{x:36,y:70},2:{x:84,y:70},3:{x:128,y:4},4:{x:1316,y:222},5:{x:204,y:578}};
+const CAPS_DEF={3:{x:200,y:140},5:{x:204,y:684},4:{x:1250,y:636}};
+// onde fica o nome da gaiola/rota em relação à vaga (x = centro do rótulo, ou esquerda se side)
+const shortTag=t=>String(t||"").replace(/_[A-Z]{2,4}\d*$/i,"");
+function tagPlace(v,below,len){const r=rua(v);const two=len>5&&v%2===0;
+  if(r===3)return below?{cx:SZ/2,y:SZ+3+(two?17:0)}:{cx:SZ/2,y:two?-35:-18};
+  if(r===5)return{cx:SZ/2,y:SZ+3+(two?17:0)};
+  if(r===1)return{left:true,y:SZ/2-8};
+  return{side:true,x:SZ+4,y:SZ/2-8}}
+function mergeGeo(p){p=p||{};const slots={};for(let v=1;v<=97;v++)slots[v]=(p.slots&&p.slots[v])||pos(v);
+  const blocks={};Object.keys(BLOCKS_DEF).forEach(k=>blocks[k]={...BLOCKS_DEF[k],...((p.blocks||{})[k]||{})});
+  const tags={},caps={};[1,2,3,4,5].forEach(n=>{tags[n]=(p.tags||{})[n]||TAGS_DEF[n];if(CAPS_DEF[n])caps[n]=(p.caps||{})[n]||CAPS_DEF[n]});
+  return {slots,blocks,tags,caps}}
+function geoBounds(G){let W=0,H=0;Object.values(G.slots).forEach(p=>{W=Math.max(W,p.x+SZ);H=Math.max(H,p.y+SZ)});
+  Object.values(G.blocks).forEach(b=>{W=Math.max(W,b.x+b.w);H=Math.max(H,b.y+b.h)});Object.values(G.caps).forEach(c=>{W=Math.max(W,c.x+150);H=Math.max(H,c.y+16)});
+  return {W:Math.max(W+12,400),H:Math.max(H+16,300)}}
+const capText=(L,n)=>n===3?"Rua 3 · "+L.veh.top+"   ←   sentido de saída":n===5?"Rua 5 · Expedição VUC"+(L.veh.bot&&L.veh.bot!=="—"?" · "+L.veh.bot:""):"Rua 4 · "+L.veh.right;
+function groups(L){const g={};Object.entries(L.map).forEach(([v,k])=>(g[k]=g[k]||[]).push(+v));Object.values(g).forEach(a=>a.sort((x,y)=>x-y));return g}
+function ranges(arr){const out=[];let i=0;while(i<arr.length){let j=i;const step=(arr[i]<=34&&arr[i+1]-arr[i]===2)?2:1;
+  while(j+1<arr.length&&arr[j+1]-arr[j]===step&&(step===1||arr[j+1]<=34))j++;
+  out.push(j>i?`${arr[i]}–${arr[j]}${step===2?" (ímpar/par)":""}`:`${arr[i]}`);i=j+1}return out.join(", ")}
+
+/* ============ UI ============ */
+const {useState,useEffect,useRef,useMemo}=React;
+const {motion,AnimatePresence,LayoutGroup}=Motion;
+const html=htm.bind(React.createElement);
+const spring={type:"spring",stiffness:420,damping:32};
+const tactile={whileHover:{scale:1.03},whileTap:{scale:.96},transition:spring};
+const stagger={hidden:{},show:{transition:{staggerChildren:.07,delayChildren:.05}}};
+const rise={hidden:{opacity:0,y:18,filter:"blur(6px)"},show:{opacity:1,y:0,filter:"blur(0px)",transition:{duration:.55,ease:[.22,1,.36,1]}}};
+
+function Swatch({k,size="sm"}){const c=CARRIERS[k];const cls=size==="lg"?"text-sm px-2.5 py-1 rounded-lg":"text-[10px] px-1.5 py-0.5 rounded-md";
+  return html`<span class=${"font-mono font-bold inline-block "+cls} style=${{background:c.bg,color:c.fg,boxShadow:"inset 0 0 0 1px rgba(0,0,0,.25)"}}>${k}</span>`}
+
+function Nav({cur,setCur,view,setView}){
+  return html`<header class="fixed top-0 inset-x-0 z-50" style=${{paddingTop:"env(safe-area-inset-top,0px)"}}>
+    <div class="glass !border-x-0 !border-t-0" style=${{background:"rgba(7,9,13,.62)"}}>
+      <nav class="max-w-7xl mx-auto px-4 h-14 flex items-center gap-4">
+        <div class="flex items-center gap-2 shrink-0">
+          <span class="w-2 h-2 rounded-full" style=${{background:"var(--accent)",boxShadow:"0 0 12px var(--accent)"}}></span>
+          <span class="font-display text-[13px] tracking-tight">SVC<span class="text-muted font-sans font-medium"> · Layouts</span></span>
+        </div>
+        <${LayoutGroup} id="tabs">
+          <div class="ml-auto flex gap-1 overflow-x-auto noscroll p-1 rounded-full" style=${{background:"rgba(255,255,255,.05)"}} role="tablist">
+            ${Object.keys(LAYOUTS).map(k=>html`<${motion.button} key=${k} id=${"tab-"+k} role="tab" aria-selected=${k===cur} onClick=${()=>setCur(k)} ...${tactile}
+              class=${"relative shrink-0 px-3.5 sm:px-4 py-1.5 rounded-full text-[13px] font-medium transition-colors "+(k===cur?"text-black":"text-muted hover:text-ink")}>
+              ${k===cur&&html`<${motion.span} layoutId="pill" class="absolute inset-0 rounded-full" style=${{background:"var(--ink)"}} transition=${spring}/>`}
+              <span class="relative">${k}</span>
+            </${motion.button}>`)}
+          </div>
+        </${LayoutGroup}>
+      </nav>
+      <div class="max-w-7xl mx-auto px-4 pb-2.5">
+        <${LayoutGroup} id="views"><div class="inline-flex gap-1 p-1 rounded-full" style=${{background:"rgba(255,255,255,.05)"}}>
+          ${[["planta","Layout e vagas"],["plan","Planejamento por rua"]].map(([id,t])=>html`<${motion.button} key=${id} id=${"view-"+id} ...${tactile} onClick=${()=>setView(id)}
+            class=${"relative px-3.5 py-1.5 rounded-full text-[12px] font-medium "+(view===id?"text-[#04121b]":"text-muted hover:text-ink")}>
+            ${view===id&&html`<${motion.span} layoutId="vpill" class="absolute inset-0 rounded-full" style=${{background:"var(--accent)"}} transition=${spring}/>`}
+            <span class="relative">${t}</span></${motion.button}>`)}
+        </div></${LayoutGroup}>
+      </div>
+    </div>
+  </header>`;
+}
+
+function Card({className="",children,title,right}){
+  return html`<${motion.section} variants=${rise} class=${"glass rounded-3xl p-5 sm:p-6 min-w-0 "+className}
+      whileHover=${{y:-2}} transition=${{type:"spring",stiffness:300,damping:26}}>
+    ${title&&html`<div class="flex items-center justify-between gap-3 mb-4"><h2 class="text-[11px] uppercase tracking-[.16em] text-muted font-semibold">${title}</h2>${right}</div>`}
+    ${children}
+  </${motion.section}>`;
+}
+
+function Skeleton(){
+  const b=(c)=>html`<div class=${"glass rounded-3xl p-6 "+c}><div class="sk h-3 w-24 mb-5"></div><div class="sk h-8 w-2/3 mb-3"></div><div class="sk h-3 w-1/2"></div></div>`;
+  return html`<div class="grid grid-cols-1 md:grid-cols-12 gap-4">
+    ${b("md:col-span-8 h-48")}${b("md:col-span-4 h-48")}
+    <div class="glass rounded-3xl p-6 md:col-span-12"><div class="sk h-3 w-32 mb-5"></div><div class="sk w-full" style=${{height:"min(52vw,560px)"}}></div></div>
+    ${b("md:col-span-7 h-72")}${b("md:col-span-5 h-72")}
+  </div>`;
+}
+
+function Hero({cur,L}){
+  const g=groups(L);const total=Object.keys(L.map).length-(g.V||[]).length;const bloq=(g.X||[]).length;
+  const n=Object.keys(g).filter(k=>k!=="X").length;
+  const stat=(v,l,color)=>html`<div class="min-w-0"><div class="font-display text-3xl sm:text-4xl tnum" style=${{color}}>${v}</div><div class="text-muted text-xs mt-1">${l}</div></div>`;
+  return html`<${Card} className="md:col-span-8">
+    <div class="text-[11px] uppercase tracking-[.16em] text-muted font-semibold">Layout do SVC</div>
+    <h1 class="font-display text-4xl sm:text-6xl tracking-tight mt-2 mb-6" style=${{textWrap:"balance"}}>
+      <${AnimatePresence} mode="wait"><${motion.span} key=${cur} class="inline-block" initial=${{opacity:0,y:14}} animate=${{opacity:1,y:0}} exit=${{opacity:0,y:-14}} transition=${{duration:.3}}>${cur}</${motion.span}></${AnimatePresence}>
+    </h1>
+    <div class="grid grid-cols-3 gap-4 max-w-md">
+      ${stat(total-bloq,"vagas ativas","var(--ink)")}
+      ${stat(bloq,"bloqueadas (X)","#ff6b6e")}
+      ${stat(n,"transportadoras","var(--accent)")}
+    </div>
+  </${Card}>`;
+}
+
+function Search({L,onPick}){
+  const [q,setQ]=useState("");const v=parseInt(q,10);const k=L.map[v];
+  return html`<${Card} className="md:col-span-4" title="Buscar vaga">
+    <label for="busca" class="sr-only">Número da vaga</label>
+    <input id="busca" inputmode="numeric" value=${q} onInput=${e=>{setQ(e.target.value.replace(/\D/g,"").slice(0,2));const n=parseInt(e.target.value,10);if(L.map[n])onPick(n)}}
+      placeholder="Ex.: 73" class="w-full bg-white/5 border border-line rounded-2xl px-4 py-3 font-display text-2xl tnum placeholder:text-white/20 outline-none focus:border-[var(--accent)] transition-colors"/>
+    <div class="mt-4 min-h-[72px]">
+      <${AnimatePresence} mode="wait">
+        ${k?html`<${motion.div} key=${v+k} initial=${{opacity:0,scale:.96}} animate=${{opacity:1,scale:1}} exit=${{opacity:0}} class="flex items-center gap-3">
+            <${Swatch} k=${k} size="lg"/>
+            <div class="min-w-0"><div class="font-semibold">${CARRIERS[k].n}</div><div class="text-muted text-xs">${area(v)} · ${vehOf(L,v)}</div></div>
+          </${motion.div}>`
+        :html`<${motion.p} key="empty" initial=${{opacity:0}} animate=${{opacity:1}} class="text-muted text-sm">${q?"Essa vaga não existe neste layout.":"Digite o número (1 a 97) para ver a transportadora."}</${motion.p}>`}
+      </${AnimatePresence}>
+    </div>
+  </${Card}>`;
+}
+
+/* ============ IMAGEM DO LAYOUT (WhatsApp) ============ */
+async function renderLayoutPNG(cur,L){
+  try{await document.fonts.ready}catch(e){}
+  const G=L.geo,{W:MW,H:MH}=geoBounds(G);
+  const K=2,PAD=24,TOP=78,LEG_H=36;
+  const counts={};Object.values(L.map).forEach(k=>counts[k]=(counts[k]||0)+1);
+  const legend=Object.keys(CARRIERS).filter(k=>counts[k]);
+  const cols=5,legRows=Math.ceil(legend.length/cols);
+  const W=MW+PAD*2,H=TOP+MH+28+legRows*LEG_H+PAD+44;
+  const cv=document.createElement("canvas");cv.width=W*K;cv.height=H*K;const g=cv.getContext("2d");g.scale(K,K);
+  const F=(w,s)=>`${w} ${s}px Onest, Arial, sans-serif`;
+  const rr=(x,y,w,h,r)=>{g.beginPath();g.moveTo(x+r,y);g.arcTo(x+w,y,x+w,y+h,r);g.arcTo(x+w,y+h,x,y+h,r);g.arcTo(x,y+h,x,y,r);g.arcTo(x,y,x+w,y,r);g.closePath()};
+  g.fillStyle="#ffffff";g.fillRect(0,0,W,H);
+  g.fillStyle="#111";g.font=F(800,28);g.textAlign="center";g.textBaseline="alphabetic";g.fillText("LAYOUT DO SVC - "+cur,W/2,42);
+  g.font=F(500,14);g.fillStyle="#555";g.fillText(new Date().toLocaleDateString("pt-BR")+"  ·  Kuehne+Nagel · Meli",W/2,63);
+  g.save();g.translate(PAD,TOP);
+  g.strokeStyle="#222";g.lineWidth=1.5;g.strokeRect(0,0,MW,MH);
+  Object.values(G.blocks).forEach(b=>{if(b.dashed){g.strokeStyle="#999";g.setLineDash([5,4]);g.strokeRect(b.x,b.y,b.w,b.h);g.setLineDash([]);return}
+    g.fillStyle="#fff";g.fillRect(b.x,b.y,b.w,b.h);g.strokeStyle="#222";g.lineWidth=1.2;g.strokeRect(b.x,b.y,b.w,b.h);
+    g.fillStyle="#111";g.font=F(700,b.h>40&&b.w>200?15:11);g.textAlign="center";g.textBaseline="middle";const ls=b.t.split("\n");ls.forEach((l,i)=>g.fillText(l,b.x+b.w/2,b.y+b.h/2+(i-(ls.length-1)/2)*13))});
+  [1,2,3,4,5].forEach(n=>{const t=G.tags[n];g.font=F(800,10);const s="RUA "+n,w=g.measureText(s).width+10;g.fillStyle="#0a4d8c";rr(t.x,t.y,w,17,8);g.fill();g.fillStyle="#fff";g.textAlign="left";g.textBaseline="middle";g.fillText(s,t.x+5,t.y+9)});
+  Object.keys(G.caps).forEach(n=>{const c=G.caps[n];g.font=F(600,11);g.fillStyle="#555";g.textAlign="left";g.textBaseline="top";g.fillText(capText(L,+n).toUpperCase(),c.x,c.y)});
+  for(let v=1;v<=97;v++){const k=L.map[v];if(!k)continue;const c=CARRIERS[k],p=G.slots[v];
+    g.fillStyle=c.bg;rr(p.x,p.y,SZ,SZ,6);g.fill();g.strokeStyle="rgba(0,0,0,.45)";g.lineWidth=1;g.stroke();
+    g.fillStyle=c.fg;g.textAlign="center";g.textBaseline="middle";g.font=F(600,10);g.fillText(String(v),p.x+SZ/2,p.y+11);g.font=F(800,12);g.fillText(k,p.x+SZ/2,p.y+25);
+    if(L.tags[v]){g.font=F(800,12);const t=shortTag(L.tags[v]),w=g.measureText(t).width+8,tp=tagPlace(v,L.tagBelow,t.length),tx=tp.left?p.x-w-4:tp.side?p.x+tp.x:p.x+tp.cx-w/2,ty=p.y+tp.y;g.fillStyle="#111";rr(tx,ty,w,16,3);g.fill();g.fillStyle="#fff";g.textAlign="center";g.textBaseline="middle";g.fillText(t,tx+w/2,ty+8.5)}}
+  g.restore();
+  const ly=TOP+MH+22,cw=(W-PAD*2)/cols;
+  legend.forEach((k,i)=>{const c=CARRIERS[k],x=PAD+(i%cols)*cw,y=ly+Math.floor(i/cols)*LEG_H;
+    g.fillStyle=c.bg;rr(x,y,34,24,5);g.fill();g.strokeStyle="rgba(0,0,0,.45)";g.stroke();
+    g.fillStyle=c.fg;g.font=F(800,11);g.textAlign="center";g.textBaseline="middle";g.fillText(k,x+17,y+12.5);
+    g.fillStyle="#111";g.font=F(600,13);g.textAlign="left";g.fillText(c.n,x+42,y+8);g.fillStyle="#666";g.font=F(500,11);g.fillText(plural(counts[k],"vaga","vagas"),x+42,y+21)});
+  g.fillStyle="#0a4d8c";g.fillRect(PAD,H-PAD-34,W-PAD*2,32);g.fillStyle="#fff";g.font=F(800,16);g.textAlign="center";g.textBaseline="middle";
+  g.fillText(`LAYOUT ${cur}   ·   CICLO ${planCiclo(cur)}   ·   ${new Date().toLocaleDateString("pt-BR")}`,W/2,H-PAD-17);
+  // encaixa numa folha A4 deitada (297 x 210 mm, 300 dpi)
+  const AW=3508,AH=2480,M=110;const a4=document.createElement("canvas");a4.width=AW;a4.height=AH;const ag=a4.getContext("2d");
+  ag.fillStyle="#fff";ag.fillRect(0,0,AW,AH);const f=Math.min((AW-2*M)/cv.width,(AH-2*M)/cv.height);const dw=cv.width*f,dh=cv.height*f;
+  ag.imageSmoothingQuality="high";ag.drawImage(cv,(AW-dw)/2,(AH-dh)/2,dw,dh);
+  return await new Promise(r=>a4.toBlob(r,"image/png"));
+}
+
+const WA_ICON=html`<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 00-8.6 15.1L2 22l5-1.3A10 10 0 1012 2zm0 18.2a8.2 8.2 0 01-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1112 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8s-.4-.1-.6.1-.7.8-.8 1-.3.2-.5.1a6.7 6.7 0 01-3.3-2.9c-.3-.4.2-.4.7-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 00-.7.3 3 3 0 00-.9 2.2 5.2 5.2 0 001.1 2.7 11.8 11.8 0 004.5 4c1.7.7 2.3.8 3.2.6a2.7 2.7 0 001.8-1.3 2.2 2.2 0 00.2-1.3c-.1-.1-.3-.2-.5-.3z"/></svg>`;
+function planCiclo(cur){let src=null;try{src=JSON.parse(localStorage.getItem("svc-plan2")||"null")}catch(e){}if(src&&src.empty)return cur;if(!src||!src.rows)src=parseDefault();
+  if(!src||!src.map)return cur;const c=detectCiclo(src.title||"",src.rows,src.map);const t=cicloTag(src.rows,src.map);return c===cur&&t?t:cur}
+function shareCaption(cur){const d=new Date().toLocaleDateString("pt-BR");return `*LAYOUT DO SVC – ${cur}*\nCiclo: ${planCiclo(cur)}\nData: ${d}`}
+const isMobile=()=>/Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+function megaUrl(){let g="";try{g=localStorage.getItem("svc-mega")||""}catch(e){}
+  const m=g.match(/chat\.whatsapp\.com\/(?:invite\/)?([A-Za-z0-9]+)/);return m?"https://web.whatsapp.com/accept?code="+m[1]:(g||"")}
+async function shareToWhatsApp(cur,L,blob,setMsg){
+  blob=blob||await renderLayoutPNG(cur,L);
+  const name=`layout-svc-${cur}-${new Date().toLocaleDateString("pt-BR").replace(/\//g,"-")}.png`;
+  const text=shareCaption(cur);
+  if(isMobile()){try{const f=new File([blob],name,{type:"image/png"});
+    if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f],text,title:"Layout "+cur});setMsg("Escolha Operação MEGARIO e envie.");return}}
+    catch(x){if(x&&x.name==="AbortError"){setMsg("Compartilhamento cancelado.");return}}}
+  // computador: copia a imagem e abre o grupo direto no WhatsApp Web (sempre na mesma aba)
+  const url=megaUrl();let copied=false;
+  try{await navigator.clipboard.write([new ClipboardItem({"image/png":blob})]);copied=true}catch(x){}
+  const a=document.createElement("a");a.href=url||"https://web.whatsapp.com/";a.target="whatsapp_megario";a.rel="opener";document.body.appendChild(a);a.click();a.remove();
+  setMsg((copied?"Imagem copiada. ":"Não deu para copiar sozinho (use Ver imagem › Copiar). ")+(url?"O grupo Operação MEGARIO abriu no WhatsApp Web: aperte Ctrl+V e Enter.":"WhatsApp Web aberto: entre no grupo, Ctrl+V e Enter. Salve o link do grupo em Ver imagem › Link do grupo para abrir direto."));
+}
+function ShareModal({cur,L,onClose}){
+  const [url,setUrl]=useState(null);const [blob,setBlob]=useState(null);const [msg,setMsg]=useState("");const [big,setBig]=useState(false);
+  const [glink,setGlink]=useState(()=>{try{return localStorage.getItem("svc-mega")||""}catch(e){return ""}});const [cfg,setCfg]=useState(false);
+  const saveLink=v=>{setGlink(v);try{localStorage.setItem("svc-mega",v)}catch(e){}};
+  useEffect(()=>{let u;renderLayoutPNG(cur,L).then(b=>{setBlob(b);u=URL.createObjectURL(b);setUrl(u)});return()=>{if(u)URL.revokeObjectURL(u)}},[]);
+  const base=`layout-svc-${cur}-${new Date().toLocaleDateString("pt-BR").replace(/\//g,"-")}`;const fname=base+".png";
+  const download=async()=>{if(!blob)return;
+    try{const d=window.claude?.use?await window.claude.use("downloads"):null;
+      if(d){try{await d.save({filename:fname,data:blob});setMsg("Imagem salva.")}catch(e){setMsg(e&&e.code==="declined"?"Download cancelado.":"Não deu para baixar aqui. Segure (ou clique com o botão direito) na imagem e escolha Salvar.")}return}}catch(e){}
+    const a=document.createElement("a");a.href=url;a.download=fname;document.body.appendChild(a);a.click();a.remove();setMsg("Se o download não começar, segure (ou clique com o botão direito) na imagem e escolha Salvar.")};
+  const saveFile=async(name,data,url2)=>{try{const d=window.claude?.use?await window.claude.use("downloads"):null;
+      if(d){try{await d.save({filename:name,data});setMsg("Arquivo salvo.")}catch(e){setMsg(e&&e.code==="declined"?"Download cancelado.":"Não deu para baixar aqui. Segure (ou clique com o botão direito) na imagem e escolha Salvar.")}return}}catch(e){}
+    const a=document.createElement("a");a.href=url2;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url2),4000)};
+  const pdf=async()=>{if(!blob)return;if(!window.jspdf){setMsg("O gerador de PDF não carregou. Use Baixar PNG.");return}
+    const doc=new window.jspdf.jsPDF({orientation:"landscape",unit:"mm",format:"a4"});
+    const im=await new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.src=url});const c=document.createElement("canvas");c.width=im.naturalWidth;c.height=im.naturalHeight;
+    const cx=c.getContext("2d");cx.fillStyle="#fff";cx.fillRect(0,0,c.width,c.height);cx.drawImage(im,0,0);
+    doc.addImage(c.toDataURL("image/jpeg",.9),"JPEG",0,0,297,210);const b=doc.output("blob");await saveFile(base+".pdf",b,URL.createObjectURL(b))};
+  const copy=async()=>{if(!blob)return;try{await navigator.clipboard.write([new ClipboardItem({"image/png":blob})]);setMsg("Imagem copiada. Agora é só colar no grupo do WhatsApp.")}
+    catch(e){setMsg("Este navegador não deixou copiar. Segure (ou clique com o botão direito) na imagem e escolha Copiar imagem.")}};
+  return html`<${motion.div} class="fixed inset-0 z-[200] flex items-center justify-center p-4" initial=${{opacity:0}} animate=${{opacity:1}} exit=${{opacity:0}} style=${{background:"rgba(3,5,8,.72)",backdropFilter:"blur(6px)"}} onClick=${onClose}>
+    <${motion.div} onClick=${e=>e.stopPropagation()} initial=${{y:24,scale:.97}} animate=${{y:0,scale:1}} exit=${{y:24,opacity:0}} transition=${spring} class="glass rounded-3xl p-4 sm:p-5 w-full max-w-4xl max-h-[90vh] flex flex-col gap-3" style=${{background:"rgba(16,20,26,.96)"}}>
+      <div class="flex items-center justify-between gap-3"><div><div class="text-[11px] uppercase tracking-[.16em] text-muted font-semibold">Imagem do layout · folha A4 deitada</div><div class="font-display text-lg">Layout ${cur}</div></div>
+        <${motion.button} ...${tactile} type="button" onClick=${onClose} class="text-muted hover:text-ink text-sm px-3 py-1.5 rounded-full border border-white/15">Fechar</${motion.button}></div>
+      <div class="flex-1 min-h-0 overflow-auto rounded-2xl bg-white">
+        ${url?html`<img src=${url} alt=${"Layout do SVC "+cur} onClick=${()=>setBig(!big)} title=${big?"Toque para ver inteiro":"Toque para ampliar"} class=${"h-auto block "+(big?"max-w-none cursor-zoom-out":"w-full cursor-zoom-in")} style=${big?{width:"260%"}:{}}/>`:html`<div class="sk h-64 w-full"></div>`}
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <${motion.button} ...${tactile} type="button" id="copyImg" onClick=${copy} disabled=${!blob} class="text-sm font-semibold px-4 py-2 rounded-full bg-white text-black">Copiar imagem</${motion.button}>
+        <${motion.button} ...${tactile} type="button" id="dlImg" onClick=${download} disabled=${!blob} class="text-sm font-medium px-4 py-2 rounded-full border border-white/20">Baixar PNG</${motion.button}>
+        <${motion.button} ...${tactile} type="button" id="dlPdf" onClick=${pdf} disabled=${!blob} class="text-sm font-medium px-4 py-2 rounded-full border border-white/20">Baixar PDF A4</${motion.button}>
+        <span class="text-xs" style=${{color:msg?"var(--accent)":"var(--muted)"}}>${msg||"Toque na imagem para ampliar e conferir as rotas."}</span>
+      </div>
+      <div class="flex flex-wrap items-center gap-2 pt-2 border-t border-line">
+        <${motion.button} ...${tactile} type="button" id="sendMega" disabled=${!blob} onClick=${()=>shareToWhatsApp(cur,L,blob,setMsg)}
+          class="inline-flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-full" style=${{background:"#25d366",color:"#062b16"}}>${WA_ICON}Compartilhar no WhatsApp</${motion.button}>
+        <button type="button" onClick=${()=>setCfg(!cfg)} class="text-xs text-muted hover:text-ink underline underline-offset-2">${glink?"Link do grupo salvo · trocar":"Link do grupo (opcional)"}</button>
+        ${cfg&&html`<div class="basis-full flex flex-wrap items-center gap-2">
+          <label for="megaLink" class="text-xs text-muted">Link de convite da Operação MEGARIO (WhatsApp › dados do grupo › Convidar via link › Copiar link). Com ele, o botão abre o grupo direto no WhatsApp Web:</label>
+          <input id="megaLink" value=${glink} onInput=${e=>saveLink(e.target.value.trim())} placeholder="https://chat.whatsapp.com/..." class="flex-1 min-w-[220px] bg-white/5 border border-line rounded-lg px-3 py-1.5 text-xs text-ink outline-none focus:border-[var(--accent)]"/>
+        </div>`}
+      </div>
+    </${motion.div}>
+  </${motion.div}>`;
+}
+
+function planGaiolas(){let src=null;try{src=JSON.parse(localStorage.getItem("svc-plan2")||"null")}catch(e){}if(src&&src.empty)return [];if(!src||!src.rows)src=parseDefault();if(!src)return [];
+  const m=src.map||{};if(!(m.rota||m.gaiola)||!m.transp)return [];
+  return aggregate(src.rows,m).map(r=>({g:(r.gaiola&&normTxt(r.gaiola)!=="SACA"?r.gaiola:r.rota),k:r.k,onda:r.onda})).filter(r=>r.g&&r.k)}
+/* ============ LER DESENHO DO LAYOUT (Claude) ============ */
+const READ_PROMPT=`Você está lendo o desenho (print de planilha do Excel) de um layout de galpão logístico (SVC) da Kuehne+Nagel/Mercado Livre. O layout tem 97 vagas numeradas em 5 ruas:
+- Rua 1: coluna mais à esquerda, vagas ímpares 1, 3, 5 ... 31
+- Rua 2: coluna ao lado, vagas pares 2, 4, 6 ... 34
+- Rua 3: fileira de cima, vagas 35 a 65 (da esquerda para a direita)
+- Rua 4: coluna à direita (área VUC), vagas 89 a 97
+- Rua 5: fileira de baixo (Expedição VUC), vagas 88 a 66 (da esquerda para a direita)
+Cada vaga é um quadrado com a sigla da transportadora: AL=ALC (preto), EC=ECO EXPRESS (bege), MS=M.J SIMÕES (cinza), HW=HAWK (azul escuro), ME=MELI EXTRA (salmão), PL=PRALOG (roxo), OT=ONTIME (amarelo), PC=PARCEIRO (branco), KG=KANGU (laranja), DL=DELUNA (verde escuro), CM=COOPMETRO (verde claro), DC=DECARGO (ciano), PY (dourado).
+Quadrado vermelho, com ou sem "X", é X (bloqueada). Se a sigla não estiver legível, deduza pela cor. Se o número impresso estiver repetido ou errado, siga a sequência da rua. Na coluna VUC pode haver uma célula amarela "VUC" ao lado: a sigla é a do quadrado da vaga.
+Perto de algumas vagas (em cima, embaixo ou ao lado) pode estar escrito o nome da gaiola/rota, ex.: VG7_CHP, A13_SD, VC1, A14. Copie exatamente como está escrito. Ignore "Passeio", "VUC" isolado, setas, "ESTEIRA", "MEZANINO", "RAMPA".
+Responda SOMENTE com um JSON neste formato:
+{"titulo":"título do desenho, se houver","ciclo":"AM" | "PM" | "SD" | "AM0-CHP" | null,"vagas":{"1":"X","2":"DC","35":"PC"},"gaiolas":{"2":"A13_SD","35":"A14"},"duvidas":[11,46]}
+Em "vagas" coloque todas as vagas que aparecem no desenho. Em "duvidas" os números das vagas que você não conseguiu ler com certeza.`;
+
+function distributeRoutes(map,tags){
+  const res={...tags};const used=new Set(Object.values(res).filter(Boolean));const byK={};
+  planGaiolas().forEach(r=>{if(!used.has(r.g)){(byK[r.k]=byK[r.k]||[]).push(r);used.add(r.g)}});
+  let placed=0,left=0;const order=v=>rua(v)===5?1000-v:v;
+  Object.keys(byK).forEach(k=>{byK[k].sort((a,b)=>(a.onda||9)-(b.onda||9)||a.g.localeCompare(b.g,"pt",{numeric:true}));
+    const vs=Object.keys(map).map(Number).filter(v=>map[v]===k&&!res[v]).sort((a,b)=>rua(a)-rua(b)||order(a)-order(b));
+    byK[k].forEach((r,i)=>{if(vs[i]){res[vs[i]]=r.g;placed++}else left++})});
+  return {tags:res,placed,left};
+}
+
+function ReadModal({cur,onClose,onApply}){
+  const [files,setFiles]=useState([]);const [busy,setBusy]=useState(false);const [err,setErr]=useState("");const [res,setRes]=useState(null);
+  const [target,setTarget]=useState(cur);const [dist,setDist]=useState(true);const [avail,setAvail]=useState(null);const ctl=useRef(null);
+  const thumbs=useMemo(()=>files.map(f=>URL.createObjectURL(f)),[files]);
+  useEffect(()=>()=>thumbs.forEach(u=>URL.revokeObjectURL(u)),[thumbs]);
+  useEffect(()=>{let ok=true;(async()=>{try{const s=window.claude?.use?await window.claude.use("sample"):null;if(!s){ok&&setAvail(false);return}
+      const lim=await s.limits().catch(()=>null);ok&&setAvail(!!lim?.images)}catch(e){ok&&setAvail(false)}})();return()=>{ok=false}},[]);
+  useEffect(()=>{const onP=e=>{const fs=[...(e.clipboardData?.files||[])].filter(f=>f.type.startsWith("image/"));if(fs.length){e.preventDefault();setFiles(p=>[...p,...fs].slice(0,4));setRes(null)}};
+    window.addEventListener("paste",onP);return()=>window.removeEventListener("paste",onP)},[]);
+  const add=list=>{const fs=[...list].filter(f=>f.type.startsWith("image/"));if(fs.length){setFiles(p=>[...p,...fs].slice(0,4));setRes(null);setErr("")}};
+  const read=async()=>{setErr("");setBusy(true);setRes(null);ctl.current=new AbortController();
+    try{const s=await window.claude.use("sample");
+      const out=await s.json(READ_PROMPT,{images:files,modelTier:"complex",signal:ctl.current.signal,cache:false});
+      const vagas={},gaiolas={};let n=0;
+      Object.entries(out?.vagas||{}).forEach(([v,k])=>{v=+v;k=String(k||"").toUpperCase().trim();if(v>=1&&v<=97){vagas[v]=CARRIERS[k]&&k!=="V"?k:"V";n++}});
+      Object.entries(out?.gaiolas||{}).forEach(([v,t])=>{v=+v;t=String(t||"").trim().toUpperCase();if(v>=1&&v<=97&&t)gaiolas[v]=t});
+      if(!n)throw {code:"empty"};
+      const cic=LAYOUTS[out?.ciclo]?out.ciclo:null;if(cic)setTarget(cic);
+      setRes({vagas,gaiolas,duvidas:(out?.duvidas||[]).map(Number).filter(x=>x>=1&&x<=97),titulo:out?.titulo||"",ciclo:cic})}
+    catch(e){const c=e&&e.code;setErr(c==="cancelled"?"Leitura cancelada.":c==="not_granted"||c==="sampling_disabled"?"A leitura pelo Claude não foi liberada nesta página.":c==="rate_limited"?"Muitas leituras seguidas ou limite de uso atingido. Tente de novo daqui a pouco.":c==="image_rejected"?"Essa imagem não foi aceita. Tente um print PNG ou JPG.":c==="invalid_json"||c==="empty"?"Não consegui entender o desenho. Tente um print mais nítido, só da área do layout.":"Não deu para ler agora. Tente de novo.")}
+    finally{setBusy(false)}};
+  const planC=(()=>{let src=null;try{src=JSON.parse(localStorage.getItem("svc-plan2")||"null")}catch(e){}if(src&&src.empty)return null;if(!src||!src.rows)src=parseDefault();return src&&src.map?detectCiclo(src.title||"",src.rows,src.map):null})();
+  const counts=res?(()=>{const c={};Object.values(res.vagas).forEach(k=>c[k]=(c[k]||0)+1);return c})():{};
+  const box="glass rounded-3xl p-4 sm:p-5 w-full max-w-4xl max-h-[92vh] overflow-auto flex flex-col gap-3";
+  return html`<${motion.div} class="fixed inset-0 z-[200] flex items-center justify-center p-4" initial=${{opacity:0}} animate=${{opacity:1}} exit=${{opacity:0}} style=${{background:"rgba(3,5,8,.72)",backdropFilter:"blur(6px)"}} onClick=${()=>{if(!busy)onClose()}}>
+    <${motion.div} onClick=${e=>e.stopPropagation()} initial=${{y:24}} animate=${{y:0}} exit=${{y:24,opacity:0}} transition=${spring} class=${box} style=${{background:"rgba(16,20,26,.97)"}}>
+      <div class="flex items-center justify-between gap-3"><div><div class="text-[11px] uppercase tracking-[.16em] text-muted font-semibold">Ler desenho do layout</div><div class="font-display text-lg">Mande o print e o app monta o layout</div></div>
+        <button type="button" onClick=${onClose} disabled=${busy} class="text-muted hover:text-ink text-sm px-3 py-1.5 rounded-full border border-white/15">Fechar</button></div>
+      ${avail===false&&html`<p class="text-sm rounded-2xl px-3 py-2" style=${{background:"rgba(255,181,71,.1)",color:"var(--amber)"}}>A leitura do desenho usa o Claude e só funciona abrindo o app pelo link dele no Claude. No arquivo baixado no computador ela não fica disponível.</p>`}
+      ${!res&&html`<div class="rounded-2xl border border-dashed border-white/20 p-4 flex flex-col sm:flex-row sm:items-center gap-3" onDragOver=${e=>e.preventDefault()} onDrop=${e=>{e.preventDefault();add(e.dataTransfer.files)}}>
+        <div class="flex-1 text-sm"><div class="font-semibold">Arraste o print, cole com Ctrl+V ou escolha o arquivo</div><div class="text-muted text-xs mt-1">Até 4 imagens. Se o layout for muito largo, mande em 2 partes (esquerda e direita) para as gaiolas ficarem legíveis.</div></div>
+        <label for="readFile" class="cursor-pointer text-sm font-semibold px-4 py-2 rounded-full bg-white text-black text-center">Escolher imagem</label>
+        <input id="readFile" type="file" accept="image/png,image/jpeg,image/webp" multiple class="sr-only" onChange=${e=>{add(e.target.files);e.target.value=""}}/>
+      </div>`}
+      ${files.length>0&&!res&&html`<div class="flex flex-wrap gap-2">${thumbs.map((u,i)=>html`<div key=${u} class="relative"><img src=${u} alt=${"Desenho "+(i+1)} class="h-24 rounded-xl border border-line bg-white"/>
+        <button type="button" onClick=${()=>setFiles(files.filter((_,j)=>j!==i))} class="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-black/80 text-xs" aria-label="Tirar imagem">×</button></div>`)}</div>`}
+      ${!res&&html`<div class="flex flex-wrap items-center gap-2">
+        <${motion.button} ...${tactile} type="button" id="readBtn" disabled=${!files.length||busy||avail===false} onClick=${read} class=${"text-sm font-semibold px-5 py-2.5 rounded-full "+(files.length&&!busy&&avail!==false?"":"opacity-40")} style=${{background:"var(--accent)",color:"#04121b"}}>${busy?"Lendo o desenho…":"Ler desenho"}</${motion.button}>
+        ${busy&&html`<button type="button" onClick=${()=>ctl.current?.abort()} class="text-sm text-muted hover:text-ink">Parar</button><span class="text-xs text-muted">Pode levar até 1 minuto.</span>`}
+      </div>`}
+      ${busy&&html`<div class="sk h-2 w-full"></div>`}
+      ${err&&html`<p class="text-sm" style=${{color:"#ff8a8c"}}>${err}</p>`}
+      ${res&&html`<div class="flex flex-col gap-3">
+        <div class="flex flex-wrap gap-2 text-xs">
+          <span class="px-2.5 py-1 rounded-full" style=${{background:"rgba(52,211,153,.12)",color:"#5ee6b0"}}>${Object.keys(res.vagas).length} vagas lidas</span>
+          <span class="px-2.5 py-1 rounded-full" style=${{background:"rgba(52,211,153,.12)",color:"#5ee6b0"}}>${Object.keys(res.gaiolas).length} gaiolas lidas</span>
+          ${res.duvidas.length>0&&html`<span class="px-2.5 py-1 rounded-full" style=${{background:"rgba(255,181,71,.12)",color:"var(--amber)"}}>Conferir: vagas ${res.duvidas.join(", ")}</span>`}
+          ${res.titulo&&html`<span class="px-2.5 py-1 rounded-full bg-white/[.06] text-muted">${res.titulo}</span>`}
+        </div>
+        <div class="grid gap-1" style=${{gridTemplateColumns:"repeat(auto-fill,minmax(46px,1fr))"}}>
+          ${Array.from({length:97},(_,i)=>i+1).map(v=>{const k=res.vagas[v]||"V";const c=CARRIERS[k];const dv=res.duvidas.includes(v);
+            return html`<div key=${v} title=${res.gaiolas[v]||""} class="rounded-md text-center leading-tight py-1" style=${{background:c.bg,color:c.fg,boxShadow:dv?"0 0 0 2px var(--amber)":"inset 0 0 0 1px rgba(0,0,0,.3)"}}>
+              <div class="font-mono text-[9px] opacity-80">${v}</div><div class="font-display text-[10px]">${k==="V"?"—":k}</div>${res.gaiolas[v]&&html`<div class="font-mono text-[8px] truncate px-0.5">${res.gaiolas[v]}</div>`}</div>`})}
+        </div>
+        <div class="flex flex-wrap gap-1">${Object.keys(CARRIERS).filter(k=>counts[k]).map(k=>html`<span key=${k} class="text-[11px] inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/[.05]"><${Swatch} k=${k}/>${counts[k]}</span>`)}</div>
+        <div class="flex flex-wrap items-center gap-3 pt-2 border-t border-line">
+          <label for="readTarget" class="text-sm">Aplicar no layout</label>
+          <select id="readTarget" value=${target} onChange=${e=>setTarget(e.target.value)} class="bg-white/5 border border-line rounded-lg px-2 py-1.5 text-sm text-ink">${Object.keys(LAYOUTS).map(k=>html`<option key=${k} value=${k}>${k}${res.ciclo===k?" (lido no desenho)":""}</option>`)}</select>
+          <label class="text-sm inline-flex items-center gap-2"><input id="readDist" type="checkbox" checked=${dist} onChange=${e=>setDist(e.target.checked)}/>Organizar as rotas do planejamento nas vagas sem gaiola</label>
+          ${dist&&planC&&planC!==target&&html`<span class="text-xs" style=${{color:"var(--amber)"}}>O planejamento carregado é do ciclo ${planC}.</span>`}
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <${motion.button} ...${tactile} type="button" id="applyRead" onClick=${()=>onApply(target,res,dist)} class="text-sm font-semibold px-5 py-2.5 rounded-full bg-white text-black">Colocar no layout ${target}</${motion.button}>
+          <button type="button" onClick=${()=>{setRes(null)}} class="text-sm text-muted hover:text-ink px-3">Ler de novo</button>
+        </div>
+      </div>`}
+    </${motion.div}>
+  </${motion.div}>`;
+}
+
+function Plant({cur,L,filter,sel,onPick,onEdit,onGeo,onTag,onZero,onApplyRead,onDistribute,onUndo,onReset,canUndo,edited}){
+  const wrap=useRef(null);const [fit,setFit]=useState(1);
+  const [edit,setEdit]=useState(false);const [mode,setMode]=useState("swap");
+  const [drag,setDrag]=useState(null);const [over,setOver]=useState(null);const [msg,setMsg]=useState("");const [share,setShare]=useState(false);
+  const [live,setLive]=useState(null);const [tagEd,setTagEd]=useState(null);const [sharing,setSharing]=useState(false);const [reading,setReading]=useState(false);const [zeroAsk,setZeroAsk]=useState(false);
+  const dragRef=useRef(null);const overRef=useRef(null);const liveRef=useRef(null);
+  const G0=L.geo;
+  // aplica o arrasto "ao vivo" para a peça acompanhar o dedo
+  const G=useMemo(()=>{if(!live)return G0;const {kind,id,dx,dy}=live;const S={...G0.slots},B={...G0.blocks},T={...G0.tags},C={...G0.caps};
+    const mv=p=>({...p,x:p.x+dx,y:p.y+dy});
+    if(kind==="slot")S[id]=mv(S[id]);else if(kind==="block")B[id]=mv(B[id]);
+    else if(kind==="rua"){T[id]=mv(T[id]);if(C[id])C[id]=mv(C[id]);for(let v=1;v<=97;v++)if(rua(v)===+id)S[v]=mv(S[v])}
+    return {slots:S,blocks:B,tags:T,caps:C}},[G0,live]);
+  const {W:MW,H:MH}=geoBounds(G0);
+  useEffect(()=>{const el=wrap.current;if(!el)return;const ro=new ResizeObserver(()=>setFit(el.clientWidth/MW));ro.observe(el);return()=>ro.disconnect()},[MW]);
+  const scale=Math.min(1.1,Math.max(window.innerWidth<768?.5:.3,fit));
+  useEffect(()=>{if(!msg)return;const t=setTimeout(()=>setMsg(""),3200);return()=>clearTimeout(t)},[msg]);
+  const listen=(move,end)=>{const up=()=>{document.body.style.userSelect="";window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);window.removeEventListener("pointercancel",up);end()};
+    document.body.style.userSelect="none";window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);window.addEventListener("pointercancel",up)};
+  // modo trocar transportadora
+  const start=(e,k,from)=>{if(!edit)return;e.preventDefault();
+    if(mode==="move"&&from){return startMove(e,"slot",from)}
+    if(mode==="tag"){if(from){setTagEd({v:from,val:L.tags[from]||""})}return}
+    const d={k,from,x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY};dragRef.current=d;setDrag(d);
+    listen(ev=>{const nd={...dragRef.current,x:ev.clientX,y:ev.clientY};dragRef.current=nd;setDrag(nd);
+      const t=document.elementFromPoint(ev.clientX,ev.clientY)?.closest("[data-v]");const v=t?+t.dataset.v:null;overRef.current=v;setOver(v)},
+    ()=>{const dd=dragRef.current,to=overRef.current;dragRef.current=null;overRef.current=null;setDrag(null);setOver(null);
+      if(!dd||!to||to===dd.from)return;const nm={...L.map};
+      if(dd.from){const other=nm[to];nm[to]=dd.k;nm[dd.from]=other;onEdit(nm);setMsg(`${CARRIERS[dd.k].n} foi para a vaga ${to} (Rua ${rua(to)})`+(other&&other!==dd.k?` · ${CARRIERS[other].n} foi para a ${dd.from}`:""))}
+      else{const old=nm[to];nm[to]=dd.k;onEdit(nm);setMsg(`Vaga ${to} (Rua ${rua(to)}) agora é ${CARRIERS[dd.k].n}`+(old&&old!==dd.k?` · antes era ${CARRIERS[old].n}`:""))}})};
+  // modo mover no desenho
+  const startMove=(e,kind,id)=>{if(!edit||mode!=="move")return;e.preventDefault();e.stopPropagation();
+    const sx=e.clientX,sy=e.clientY;const l={kind,id,dx:0,dy:0};liveRef.current=l;setLive(l);
+    listen(ev=>{const n={kind,id,dx:Math.round((ev.clientX-sx)/scale/4)*4,dy:Math.round((ev.clientY-sy)/scale/4)*4};liveRef.current=n;setLive(n)},
+    ()=>{const l=liveRef.current;liveRef.current=null;setLive(null);if(!l||(!l.dx&&!l.dy))return;
+      const mv=p=>({x:p.x+l.dx,y:p.y+l.dy});const patch={};
+      if(kind==="slot")patch.slots={[id]:mv(G0.slots[id])};
+      else if(kind==="block")patch.blocks={[id]:mv(G0.blocks[id])};
+      else{patch.tags={[id]:mv(G0.tags[id])};if(G0.caps[id])patch.caps={[id]:mv(G0.caps[id])};const s={};for(let v=1;v<=97;v++)if(rua(v)===+id)s[v]=mv(G0.slots[v]);patch.slots=s}
+      onGeo(patch);setMsg(kind==="rua"?`Rua ${id} movida`:kind==="slot"?`Vaga ${id} movida`:`${(G0.blocks[id].t||"Expedição VUC").replace("\n"," ")} movida`)})};
+
+  const moving=edit&&mode==="move";
+  const btn="text-xs font-medium px-3.5 py-2 rounded-full";
+  const seg=(id,t)=>html`<button type="button" id=${"mode-"+id} onClick=${()=>setMode(id)} class=${"relative px-3 py-1.5 rounded-full text-xs font-medium "+(mode===id?"text-black":"text-muted hover:text-ink")}>
+    ${mode===id&&html`<${motion.span} layoutId="modepill" class="absolute inset-0 rounded-full" style=${{background:"var(--ink)"}} transition=${spring}/>`}<span class="relative">${t}</span></button>`;
+  const right=html`<div class="flex flex-wrap items-center justify-end gap-2">
+    ${edited&&!edit&&html`<span class="text-[11px] px-2 py-0.5 rounded-full" style=${{background:"rgba(255,181,71,.14)",color:"var(--amber)"}}>layout alterado</span>`}
+    ${edit&&html`<${motion.button} ...${tactile} type="button" disabled=${!canUndo} onClick=${()=>{onUndo();setMsg("Desfeito")}} class=${btn+" border border-white/20 "+(canUndo?"":"opacity-40")}>Desfazer</${motion.button}>`}
+    ${edit&&edited&&html`<${motion.button} ...${tactile} type="button" onClick=${()=>{onReset();setMsg("Voltou ao layout original "+cur)}} class=${btn+" text-muted hover:text-ink"}>Voltar ao original</${motion.button}>`}
+    <${motion.button} ...${tactile} type="button" id="shareBtn" onClick=${()=>setShare(true)} class=${btn+" border border-white/20 inline-flex items-center gap-1.5"}><svg width="13" height="13" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="16" rx="3" stroke="currentColor" stroke-width="1.8"/><circle cx="9" cy="10" r="1.8" fill="currentColor"/><path d="M4 18l5-5 4 4 3-3 4 4" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>Ver imagem</${motion.button}>
+    <${motion.button} ...${tactile} type="button" id="quickShare" disabled=${sharing} onClick=${async()=>{setSharing(true);try{await shareToWhatsApp(cur,L,null,setMsg)}finally{setSharing(false)}}} class=${btn+" inline-flex items-center gap-1.5 font-semibold"} style=${{background:"#25d366",color:"#062b16"}}>${WA_ICON}${sharing?"Gerando…":"Compartilhar no WhatsApp"}</${motion.button}>
+    <${motion.button} ...${tactile} type="button" id="editBtn" onClick=${()=>setEdit(!edit)} class=${btn+" "+(edit?"bg-white text-black":"border border-white/20")}>${edit?"Concluir":"Editar layout"}</${motion.button}>
+  </div>`;
+  const dragProps=(kind,id)=>moving?{onPointerDown:e=>startMove(e,kind,id),style:{touchAction:"none",cursor:"grab"}}:{};
+  const isLive=(kind,id)=>live&&live.kind===kind&&String(live.id)===String(id);
+  return html`<${Card} className="md:col-span-12" title=${"Layout e vagas · "+cur} right=${right}>
+    <${AnimatePresence}>${share&&html`<${ShareModal} key="share" cur=${cur} L=${L} onClose=${()=>setShare(false)}/>`}</${AnimatePresence}>
+
+    <${AnimatePresence}>${edit&&html`<${motion.div} initial=${{opacity:0,height:0}} animate=${{opacity:1,height:"auto"}} exit=${{opacity:0,height:0}} class="overflow-hidden">
+      <div class="mb-3 flex flex-wrap items-center gap-3">
+        <${LayoutGroup} id="modes"><div class="inline-flex p-1 rounded-full" style=${{background:"rgba(255,255,255,.06)"}}>${seg("swap","Trocar transportadora")}${seg("move","Mover no desenho")}${seg("tag","Gaiola/rota")}</div></${LayoutGroup}>
+
+        <span class="text-muted text-xs">${mode==="tag"?"Toque numa vaga e digite o nome da gaiola/rota que fica em cima dela (ex.: VD2_CHP). Enter salva; deixe vazio para apagar.":mode==="swap"?"Arraste a peça até outra vaga: ela pega o número de lá e mantém a transportadora. Se tiver alguém, os dois trocam.":"Arraste qualquer peça, esteira, mezanino, rampa ou a faixa da expedição. Para mover a coluna inteira, arraste a etiqueta RUA."}</span>
+      </div>
+      ${mode==="swap"&&html`<div class="mb-4 pb-4 border-b border-line flex flex-wrap gap-2">
+        ${Object.keys(CARRIERS).map(k=>{const c=CARRIERS[k];return html`<div key=${k} onPointerDown=${e=>start(e,k,null)}
+          class="cursor-grab select-none flex items-center gap-2 rounded-xl pl-1 pr-3 py-1 border border-line bg-white/[.03] hover:bg-white/[.07]" style=${{touchAction:"none"}}>
+          <span class="w-8 h-8 rounded-lg flex items-center justify-center font-display text-[10px]" style=${{background:c.bg,color:c.fg,boxShadow:"inset 0 0 0 1px rgba(0,0,0,.3)"}}>${k}</span>
+          <span class="text-xs">${c.n}</span></div>`})}
+      </div>`}
+    </${motion.div}>`}</${AnimatePresence}>
+    ${ReactDOM.createPortal(html`<${AnimatePresence}>${msg&&html`<${motion.div} key="toast" initial=${{opacity:0,y:16,x:"-50%"}} animate=${{opacity:1,y:0,x:"-50%"}} exit=${{opacity:0,y:16,x:"-50%"}} class="fixed left-1/2 z-[150] text-sm rounded-2xl px-4 py-2.5 shadow-2xl max-w-[92vw]" style=${{bottom:"calc(20px + env(safe-area-inset-bottom,0px))",background:"rgba(10,30,44,.96)",color:"var(--accent)",border:"1px solid rgba(76,195,255,.35)"}}>${msg}</${motion.div}>`}</${AnimatePresence}>`,document.body)}
+    <div ref=${wrap} class="overflow-x-auto overflow-y-hidden">
+      <div style=${{width:MW*scale,height:MH*scale}}>
+        <div class=${"relative origin-top-left rounded-2xl "+(moving?"":"")} style=${{width:MW,height:MH,transform:`scale(${scale})`,backgroundImage:moving?"radial-gradient(rgba(255,255,255,.08) 1px,transparent 1px)":"none",backgroundSize:"16px 16px"}}>
+          ${Object.entries(G.blocks).map(([id,b])=>html`<div key=${id} ...${dragProps("block",id)}
+            class=${"absolute rounded-xl flex items-center justify-center text-center whitespace-pre-line text-[11px] tracking-[.2em] text-muted font-semibold "+(b.dashed?"border border-dashed border-white/15":"border border-white/15 bg-white/[.03]")+(moving?" hover:border-[var(--accent)]":"")+(isLive("block",id)?" !border-[var(--amber)]":"")}
+            style=${{left:b.x,top:b.y,width:b.w,height:b.h,...(moving?{touchAction:"none",cursor:"grab"}:{}),fontSize:b.h>40&&b.w>200?13:10}}>${b.t}</div>`)}
+          ${Object.entries(G.caps).map(([n,c])=>html`<div key=${"c"+n} class="absolute text-[11px] uppercase tracking-[.14em] text-muted font-semibold whitespace-nowrap pointer-events-none" style=${{left:c.x,top:c.y}}>${capText(L,+n)}</div>`)}
+          ${[1,2,3,4,5].map(n=>{const t=G.tags[n];return html`<div key=${"t"+n} ...${dragProps("rua",n)} class=${"absolute z-10 font-display text-[10px] tracking-wide px-1.5 py-0.5 rounded-full whitespace-nowrap select-none "+(moving?"ring-2 ring-white/30":"")}
+            style=${{left:t.x,top:t.y,background:isLive("rua",n)?"var(--amber)":"var(--accent)",color:"#04121b",...(moving?{touchAction:"none",cursor:"grab"}:{})}}>${moving?"⠿ ":""}RUA ${n}</div>`})}
+          <${AnimatePresence} mode="popLayout">
+            <${motion.div} key=${cur} initial="hidden" animate="show" exit=${{opacity:0,transition:{duration:.15}}} variants=${{hidden:{},show:{transition:{staggerChildren:.006}}}}>
+              ${Object.keys(L.map).map(Number).sort((a,b)=>a-b).map(v=>{const k=L.map[v];const c=CARRIERS[k];const hit=!edit&&filter===k;const dim=!edit&&filter&&!hit;const isSel=!edit&&sel===v;const tag=L.tags[v];
+                const isFrom=drag&&drag.from===v;const isOver=drag&&over===v&&over!==drag.from;const p=G.slots[v];const lv=live&&(isLive("slot",v)||(live.kind==="rua"&&rua(v)===+live.id));
+                return html`<${motion.button} key=${v} data-v=${v} type="button" aria-label=${"Vaga "+v+", "+c.n}
+                  variants=${{hidden:{opacity:0,scale:.6},show:{opacity:dim?.14:1,scale:1,transition:{type:"spring",stiffness:500,damping:30}}}}
+                  animate=${{opacity:isFrom?.18:dim?.14:1,scale:isOver?1.12:lv?1.04:hit||isSel?1.1:1}}
+                  whileHover=${edit?{scale:1.06}:{scale:1.12,zIndex:5}} whileTap=${{scale:.94}}
+                  onClick=${()=>{if(!edit)onPick(v)}} onPointerDown=${e=>start(e,k,v)}
+                  class=${"absolute rounded-lg flex flex-col items-center justify-center leading-none "+(edit?"cursor-grab":"")}
+                  style=${{left:p.x,top:p.y,width:SZ,height:SZ,background:c.bg,color:c.fg,touchAction:edit?"none":"auto",
+                    boxShadow:isOver?"0 0 0 2px var(--bg),0 0 0 4px var(--amber),0 0 20px rgba(255,181,71,.6)":lv?"0 10px 24px rgba(0,0,0,.5),0 0 0 2px var(--amber)":isSel?"0 0 0 2px var(--bg),0 0 0 4px var(--accent)":hit?"0 0 0 2px var(--accent),0 0 18px rgba(76,195,255,.45)":"inset 0 0 0 1px rgba(0,0,0,.3)",zIndex:isOver||lv?6:hit||isSel?3:1}}>
+                  ${tag&&(()=>{const st=shortTag(tag);const tp=tagPlace(v,L.tagBelow,st.length);return html`<span title=${tag} class="absolute z-10 font-mono font-bold text-[11px] leading-[15px] px-1 rounded bg-white text-black whitespace-nowrap pointer-events-none shadow" style=${tp.left?{right:"calc(100% + 4px)",top:tp.y}:tp.side?{left:tp.x,top:tp.y}:{left:tp.cx,top:tp.y,transform:"translateX(-50%)"}}>${st}</span>`})()}
+                  <b class="font-mono text-[10px] opacity-85 pointer-events-none">${v}</b>
+                  <span class="font-display text-[11px] mt-0.5 pointer-events-none">${k}</span>
+                </${motion.button}>`})}
+            </${motion.div}>
+          </${AnimatePresence}>
+          ${edit&&mode==="tag"&&tagEd&&(()=>{const p=G.slots[tagEd.v];const kk=L.map[tagEd.v];const used=new Set(Object.values(L.tags));
+            const sug=planGaiolas().filter(r=>r.k===kk).sort((a,b)=>(a.onda||9)-(b.onda||9)||a.g.localeCompare(b.g,"pt",{numeric:true}));const save=val=>{onTag(tagEd.v,val.trim().toUpperCase());setMsg(val.trim()?`Vaga ${tagEd.v}: ${val.trim().toUpperCase()}`:`Nome tirado da vaga ${tagEd.v}`);setTagEd(null)};
+            return html`<div class="absolute z-[70] flex flex-wrap items-center gap-1 p-1.5 rounded-xl glass max-w-[360px]" style=${{left:Math.max(0,p.x-40),top:p.y+SZ+6,background:"rgba(16,20,26,.97)"}} onPointerDown=${e=>e.stopPropagation()}>
+              <label for="tagInput" class="text-[10px] text-muted px-1">Vaga ${tagEd.v}</label>
+              <input id="tagInput" autoFocus value=${tagEd.val} onInput=${e=>setTagEd({...tagEd,val:e.target.value})}
+                onKeyDown=${e=>{if(e.key==="Enter")save(tagEd.val);if(e.key==="Escape")setTagEd(null)}}
+                placeholder="VD2_CHP" class="w-28 bg-white/10 border border-line rounded-lg px-2 py-1 font-mono text-xs text-ink outline-none focus:border-[var(--accent)] uppercase"/>
+              <button type="button" onClick=${()=>save(tagEd.val)} class="text-xs font-semibold px-2.5 py-1 rounded-lg bg-white text-black">OK</button>
+              ${tagEd.val&&html`<button type="button" onClick=${()=>save("")} class="text-xs px-2 py-1 rounded-lg text-muted hover:text-ink">Apagar</button>`}
+              <div class="basis-full text-[10px] text-muted px-1 pt-1">${sug.length?`Gaiolas de ${CARRIERS[kk].n} no planejamento:`:kk==="X"?"Vaga bloqueada.":`Nenhuma gaiola de ${CARRIERS[kk].n} no planejamento carregado. Digite acima.`}</div>
+              ${sug.length>0&&html`<div class="basis-full flex flex-wrap gap-1 max-w-[340px] max-h-[150px] overflow-auto p-0.5">${sug.map(r=>{const u=used.has(r.g)&&L.tags[tagEd.v]!==r.g;
+                return html`<button key=${r.g} type="button" onClick=${()=>save(r.g)} title=${u?"Já está em outra vaga":""} class=${"font-mono text-[11px] px-2 py-1 rounded-lg border "+(u?"border-transparent bg-white/[.03] text-muted line-through":"border-white/15 bg-white/[.06] hover:bg-white/15 text-ink")}>${r.g}<span class="text-muted text-[9px] ml-1">${r.onda?"O"+r.onda:""}</span></button>`})}</div>`}
+            </div>`})()}
+          ${drag&&drag.from&&(()=>{const p=G.slots[drag.from],c=CARRIERS[drag.k],GS=SZ*1.08;const x=p.x+SZ/2+(drag.x-drag.sx)/scale-GS/2,y=p.y+SZ/2+(drag.y-drag.sy)/scale-GS/2;
+            return html`<div class="absolute pointer-events-none rounded-lg flex flex-col items-center justify-center leading-none" style=${{left:x,top:y,width:GS,height:GS,zIndex:60,background:c.bg,color:c.fg,boxShadow:"0 14px 30px rgba(0,0,0,.6),0 0 0 2px var(--amber)",transform:"rotate(-4deg)"}}>
+              <b class="font-mono text-[10px]">${over&&over!==drag.from?over:drag.from}</b><span class="font-display text-[11px] mt-0.5">${drag.k}</span></div>`})()}
+        </div>
+      </div>
+    </div>
+    ${drag&&!drag.from&&ReactDOM.createPortal(html`<div class="fixed pointer-events-none z-[100] rounded-lg flex flex-col items-center justify-center leading-none"
+      style=${{left:drag.x-SZ*scale/2,top:drag.y-SZ*scale/2,width:SZ*scale,height:SZ*scale,background:CARRIERS[drag.k].bg,color:CARRIERS[drag.k].fg,boxShadow:"0 12px 30px rgba(0,0,0,.55),0 0 0 2px var(--amber)",transform:"rotate(-6deg)"}}>
+      <b class="font-mono" style=${{fontSize:10*scale}}>${over||"+"}</b><span class="font-display" style=${{fontSize:11*scale,marginTop:2}}>${drag.k}</span></div>`,document.body)}
+  </${Card}>`;
+}
+
+function Carriers({L,filter,setFilter}){
+  const g=groups(L);const max=Math.max(...Object.values(g).map(a=>a.length));
+  const list=Object.keys(CARRIERS).sort((a,b)=>(g[b]||[]).length-(g[a]||[]).length);
+  return html`<${Card} className="md:col-span-7" title="Transportadoras" right=${filter&&html`<${motion.button} ...${tactile} onClick=${()=>setFilter(null)} class="text-xs text-accent font-medium">Limpar filtro</${motion.button}>`}>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+      ${list.map(k=>{const n=(g[k]||[]).length;const on=filter===k;
+        return html`<${motion.button} key=${k} ...${tactile} type="button" onClick=${()=>setFilter(on?null:k)} disabled=${!n}
+          class=${"relative text-left rounded-2xl px-3 py-2.5 flex items-center gap-3 border transition-colors "+(on?"border-[var(--accent)] bg-white/[.07]":"border-transparent hover:bg-white/[.04]")+(n?"":" opacity-35 cursor-not-allowed")}>
+          <${Swatch} k=${k}/>
+          <div class="flex-1 min-w-0">
+            <div class="flex justify-between gap-2 text-sm"><span class="truncate">${CARRIERS[k].n}</span><span class="tnum text-muted font-mono text-xs">${n}</span></div>
+            <div class="h-1 rounded-full bg-white/[.06] mt-1.5 overflow-hidden"><${motion.div} class="h-full rounded-full" style=${{background:k==="X"?"#ff6b6e":"var(--accent)"}}
+              initial=${{width:0}} animate=${{width:(n/max*100)+"%"}} transition=${{duration:.7,ease:[.22,1,.36,1]}}/></div>
+          </div>
+        </${motion.button}>`})}
+    </div>
+  </${Card}>`;
+}
+
+function Detail({L,filter,sel}){
+  const g=groups(L);let body;
+  if(sel&&L.map[sel]){const k=L.map[sel];body=html`<${motion.div} key=${"v"+sel} initial=${{opacity:0,x:12}} animate=${{opacity:1,x:0}} exit=${{opacity:0,x:-12}}>
+      <div class="font-display text-6xl tnum">${sel}</div>
+      <div class="flex items-center gap-2 mt-3"><${Swatch} k=${k} size="lg"/><span class="text-lg font-semibold">${CARRIERS[k].n}</span></div>
+      <dl class="mt-5 grid grid-cols-2 gap-y-3 text-sm">
+        <dt class="text-muted">Rua</dt><dd>${area(sel)}</dd>
+        <dt class="text-muted">Veículo</dt><dd>${vehOf(L,sel)}</dd>
+        ${L.tags[sel]&&html`<dt class="text-muted">Código</dt><dd class="font-mono">${L.tags[sel]}</dd>`}
+        <dt class="text-muted">Mesma transp.</dt><dd class="font-mono text-xs leading-relaxed">${ranges(g[k])}</dd>
+      </dl></${motion.div}>`}
+  else if(filter){const vs=g[filter]||[];body=html`<${motion.div} key=${"f"+filter} initial=${{opacity:0,x:12}} animate=${{opacity:1,x:0}} exit=${{opacity:0,x:-12}}>
+      <div class="flex items-center gap-2"><${Swatch} k=${filter} size="lg"/><span class="text-lg font-semibold">${CARRIERS[filter].n}</span></div>
+      <div class="font-display text-5xl tnum mt-4">${vs.length}<span class="text-muted text-base font-sans ml-2">vagas</span></div>
+      <div class="flex flex-wrap gap-1.5 mt-5">${vs.map(v=>html`<span key=${v} class="font-mono text-xs px-2 py-1 rounded-lg bg-white/[.06] tnum">${v}</span>`)}</div></${motion.div}>`}
+  else body=html`<${motion.p} key="empty" initial=${{opacity:0}} animate=${{opacity:1}} class="text-muted text-sm leading-relaxed">Toque numa vaga da planta ou numa transportadora para ver os detalhes aqui.</${motion.p}>`;
+  return html`<${Card} className="md:col-span-5" title="Detalhe"><${AnimatePresence} mode="wait">${body}</${AnimatePresence}></${Card}>`;
+}
+
+function Table({cur,L}){
+  const g=groups(L);const [msg,setMsg]=useState("");
+  const copy=()=>{const txt=["Layout;Vaga;Rua;Sigla;Transportadora;Local;Veículo;Código"].concat(Object.keys(L.map).map(Number).sort((a,b)=>a-b).map(v=>[cur,v,"Rua "+rua(v),L.map[v],CARRIERS[L.map[v]].n,area(v),vehOf(L,v),L.tags[v]||""].join(";"))).join("\n");
+    navigator.clipboard.writeText(txt).then(()=>setMsg("Copiado")).catch(()=>setMsg("Não deu para copiar aqui"));setTimeout(()=>setMsg(""),2200)};
+  return html`<${Card} className="md:col-span-12" title=${"Vagas por transportadora · "+cur}
+      right=${html`<div class="flex items-center gap-3"><${AnimatePresence}>${msg&&html`<${motion.span} initial=${{opacity:0,y:4}} animate=${{opacity:1,y:0}} exit=${{opacity:0}} class="text-xs text-accent">${msg}</${motion.span}>`}</${AnimatePresence}>
+        <${motion.button} ...${tactile} onClick=${copy} class="text-xs font-medium px-3.5 py-2 rounded-full bg-white text-black">Copiar para Excel</${motion.button}></div>`}>
+    <div class="overflow-x-auto -mx-1">
+      <table class="w-full min-w-[620px] text-sm">
+        <thead><tr class="text-left text-[11px] uppercase tracking-[.14em] text-muted"><th class="py-2 px-1 font-semibold">Transportadora</th><th class="py-2 px-1 font-semibold">Ruas</th><th class="py-2 px-1 font-semibold">Qtd</th><th class="py-2 px-1 font-semibold">Vagas</th></tr></thead>
+        <tbody>${Object.keys(CARRIERS).filter(k=>g[k]).map(k=>html`<tr key=${k} class="border-t border-line">
+          <td class="py-2.5 px-1"><div class="flex items-center gap-2"><${Swatch} k=${k}/>${CARRIERS[k].n}</div></td>
+          <td class="py-2.5 px-1 text-xs whitespace-nowrap">${[...new Set(g[k].map(rua))].sort().map(r=>"Rua "+r).join(", ")}</td><td class="py-2.5 px-1 font-mono tnum">${g[k].length}</td>
+          <td class="py-2.5 px-1 font-mono text-xs text-white/80 tnum">${ranges(g[k])}</td></tr>`)}</tbody>
+      </table>
+    </div>
+    <p class="text-muted text-xs mt-4 max-w-[70ch]">X = vaga bloqueada. PY fica como PY (vaga 73 do AM e vaga 6 do PM). PRALOG não tem vaga em nenhum dos 4 layouts.</p>
+  </${Card}>`;
+}
+
+const DEFAULT_PLAN_CSV=",,,,PLANEJAMENTO AM,,,,,,,,,28/09/2026\nMLP - 28/09 - 07:50,DATA EXP,ROTA,GAIOLA,BAIRROS,CLUSTER,MODAL,PARADAS,SPR,COMERCIAIS,PLACE,COLETA,ROTEIROS,ONDA CADASTRADA\nESVAZIAR,28/09,AM1_1,H18_AM1,Parque Eldorado / Vila Santa Cruz / Chácaras Rio-Petrópolis / Taquara,R48 - 90%,Veículo de Passeio,6,21,15,0,0,,Onda 4\nDECARGO,28/09,AM1_10,A7_AM1,Jardim Santa Rita / Parque Independência / Parque São Pedro de Alcantara / Parque João Pessoa / Jardim Primavera / Saracuruna / Parque Guararapes / Vila Urussaí / Parque Uruguaiana / Parque Chuno / Jardim Rosário,R33 - 100%,Veículo de Passeio,58,63,11,0,0,,Onda 2\nCOOPMETRO,28/09,AM1_100,I12_AM1,Benfica / São Cristóvão / Manguinhos,R18 - 95%,Veículo de Passeio,48,64,32,0,0,,Onda 1\nCOOPMETRO,28/09,AM1_101,H13_AM1,Benfica / Mangueira / São Cristóvão,R18 - 100%,Veículo de Passeio,28,38,23,0,0,,Onda 1\nDECARGO,28/09,AM1_102,I8_AM1,Centro / Saúde,R16 - 90%,Veículo de Passeio,47,67,46,0,0,,Onda 1\nDECARGO,28/09,AM1_103,C14_AM1,Centro / Gamboa / Saúde,R16 - 98%,Veículo de Passeio,28,46,31,7,4,,Onda 1\nDECARGO,28/09,AM1_104,D10_AM1,Santo Cristo,R16 - 100%,Veículo de Passeio,20,41,11,0,0,,Onda 2\nCOOPMETRO,28/09,AM1_105,H16_AM1,Caju,R20 - 100%,Veículo de Passeio,32,36,13,0,0,,Onda 2\nCOOPMETRO,28/09,AM1_106,D8_AM1,São Cristóvão / Vasco da Gama / Benfica,R18 - 100%,Veículo de Passeio,62,72,44,0,0,,Onda 1\nCOOPMETRO,28/09,AM1_107,G2_AM1,\"ROTA MÃE - 5 SACAS - 223, 224, 225, 226, 227\",16 - 62%,VUC Dedicado com Ajudante,3,21,14,0,18,,Onda 4\nCOOPMETRO,28/09,AM1_107_1,SACA,São Cristóvão / Vasco da Gama,R18 - 100%,Veículo de Passeio,38,55,28,0,0,,SEM ONDA\nCOOPMETRO,28/09,AM1_107_2,SACA,São Cristóvão / Vasco da Gama,R18 - 100%,Veículo de Passeio,33,55,25,3,0,,SEM ONDA\nCOOPMETRO,28/09,AM1_107_3,SACA,Centro / Saúde / Santo Cristo / Gamboa,R16 - 95%,Motocicleta,36,40,27,0,0,,SEM ONDA\nCOOPMETRO,28/09,AM1_107_4,SACA,Santo Cristo / Gamboa,R16 - 100%,Motocicleta,20,21,11,0,0,,SEM ONDA\nCOOPMETRO,28/09,AM1_107_5,SACA,Centro,R16 - 93%,Walker,9,30,7,13,0,,SEM ONDA\nONTIME,28/09,AM1_108,J2_AM1,\"ROTA MÃE - 2 SACAS - 202, 203\",R1 - 47%,Melione VUC Agregado,30,51,17,0,0,,Onda 4\nONTIME,28/09,AM1_108_12,SACA,Maracanã / Vila Isabel,R1 - 92%,Walker,48,50,15,0,0,,SEM ONDA\nONTIME,28/09,AM1_108_2,SACA,Grajaú / Vila Isabel,84 - 94%,Walker,34,50,1,0,0,,SEM ONDA\nONTIME,28/09,AM1_109,B3_AM1,Tijuca,10 - 77%,Melione VUC Agregado,42,101,41,31,0,,Onda 1\nDECARGO,28/09,AM1_11,A8_AM1,Parque Uruguaiana / Saracuruna / Jardim Rosário / Vila Urussaí / Parque Guararapes / Jardim Santa Rita,R33 - 100%,Veículo de Passeio,46,62,11,14,0,,Onda 1\nONTIME,28/09,AM1_110,J4_AM1,\"ROTA MÃE - 9 SACAS - 205, 206, 207, 208, 209, 210, 212, 213, 214\",84 - 38%,Melione VUC Agregado,30,144,31,0,101,,Onda 4\nONTIME,28/09,AM1_110_10,SACA,Andaraí / Grajaú / Tijuca,84 - 63%,Veículo de Passeio,54,70,12,0,0,,SEM ONDA\nONTIME,28/09,AM1_110_11,SACA,Maracanã / Vila Isabel / Tijuca,10 - 57%,Veículo de Passeio,47,70,16,0,0,,SEM ONDA\nONTIME,28/09,AM1_110_3,SACA,Sao Cristovao / Maracanã / São Cristóvão / Santo Cristo / Tijuca,R1 - 64%,Veículo de Passeio,33,70,18,5,0,,SEM ONDA\nONTIME,28/09,AM1_110_4,SACA,Grajaú / Vila Isabel / Maracanã / São Francisco Xavier / Tijuca / Mangueira,R1 - 61%,Veículo de Passeio,44,70,12,0,0,,SEM ONDA\nONTIME,28/09,AM1_110_5,SACA,Grajaú / Rio de Janeiro / Vila Isabel,84 - 94%,Veículo de Passeio,59,70,9,3,0,,SEM ONDA\nONTIME,28/09,AM1_110_6,SACA,Andaraí / Tijuca / ANDARAI,84 - 81%,Veículo de Passeio,49,70,9,11,0,,SEM ONDA\nONTIME,28/09,AM1_110_7,SACA,Vila Isabel / Grajaú / Andaraí / Engenho Novo / Praça da Bandeira,R1 - 53%,Veículo de Passeio,57,70,14,0,0,,SEM ONDA\nONTIME,28/09,AM1_110_8,SACA,Rio Comprido / Estácio / Tijuca / Praça da Bandeira / Cidade Nova,10 - 79%,Veículo de Passeio,46,70,17,1,0,,SEM ONDA\nONTIME,28/09,AM1_110_9,SACA,Vila Isabel / Tijuca / Andaraí,R1 - 81%,Veículo de Passeio,57,70,21,2,0,,SEM ONDA\nONTIME,28/09,AM1_111,A1_AM1,Maracanã / Praça da Bandeira / Tijuca,R1 - 80%,Melione VUC Agregado,54,89,17,0,0,,Onda 2\nHAWK,28/09,AM1_112,B7_AM1,Tijuca,10 - 62%,Melione VUC Agregado,30,55,16,0,0,,Onda 1\nHAWK,28/09,AM1_113,A16_AM1,Grajaú / Vila Isabel,84 - 90%,Melione VUC Agregado,39,52,6,0,0,,Onda 1\nHAWK,28/09,AM1_114,G1_AM1,ROTA MÃE - 1 SACAS - 222,84 - 47%,Melione VUC Agregado,28,68,25,24,5,,Onda 4\nHAWK,28/09,AM1_114_1,SACA,Tijuca,10 - 57%,Walker,363,590,133,0,0,,SEM ONDA\nONTIME,28/09,AM1_115,J5_AM1,\"ROTA MÃE - 3 SACAS - 215, 216, 217\",10 - 57%,Melione VUC Agregado,29,76,26,21,4,,Onda 4\nONTIME,28/09,AM1_115_13,SACA,Maracanã,R1 - 100%,Motocicleta,2,2,1,0,0,,SEM ONDA\nONTIME,28/09,AM1_115_14,SACA,Tijuca / Maracanã,10 - 57%,Motocicleta,40,44,10,0,0,,SEM ONDA\nONTIME,28/09,AM1_115_15,SACA,Rio Comprido / Tijuca / Estácio,10 - 82%,Motocicleta,39,44,18,3,0,,SEM ONDA\nONTIME,28/09,AM1_116,B6_AM1,Tijuca / Maracanã / Vila Isabel,R1 - 58%,Melione VUC Agregado,31,59,26,0,0,,Onda 2\nKANGU,28/09,AM1_117,B5_AM1,Tijuca / Andaraí,10 - 65%,Veículo de Passeio,18,63,12,31,0,,Onda 4\nKANGU,28/09,AM1_118,C6_AM1,Tijuca,10 - 65%,Veículo de Passeio,60,77,29,0,0,,Onda 4\nKANGU,28/09,AM1_119,C2_AM1,Rio Comprido / Tijuca / Praça da Bandeira / Maracanã / Estácio,R1 - 93%,Veículo de Passeio,57,92,23,26,0,,Onda 4\nHAWK,28/09,AM1_12,D14_AM1,Jardim Guanabara / Jardim Carioca / Freguesia (Ilha do Governador),83 - 89%,Veículo de Passeio,14,28,9,0,0,,Onda 1\nKANGU,28/09,AM1_120,A3_AM1,Grajaú / Rio de Janeiro / Andaraí / Tijuca,84 - 93%,Veículo de Passeio,20,81,11,54,0,,Onda 4\nHAWK,28/09,AM1_13,B8_AM1,Galeão / Cidade Universitária / Cordovil / Mangueira,R83 - 98%,Veículo de Passeio,10,92,9,81,37,,Onda 1\nHAWK,28/09,AM1_14,A18_AM1,Ribeira / Paquetá / Cacuia / Pitangueiras / Zumbi / Praia da Bandeira,13 - 59%,Veículo de Passeio,32,34,4,0,0,,Onda 1\nHAWK,28/09,AM1_15,D15_AM1,Paquetá / Cacuia,13 - 92%,Veículo de Passeio,20,26,3,0,0,,Onda 2\nHAWK,28/09,AM1_16,B11_AM1,Jardim Guanabara / Jardim Carioca / Cacuia / Galeão / Portuguesa / Tubiacanga,83 - 79%,Veículo de Passeio,15,53,12,34,0,,Onda 1\nHAWK,28/09,AM1_17,H10_AM1,Jardim Guanabara / Cacuia / Jardim Carioca / Pitangueiras / Cocotá,83 - 82%,Veículo de Passeio,33,45,33,0,0,,Onda 1\nHAWK,28/09,AM1_18,D11_AM1,Cocotá / Jardim Carioca / Portuguesa / Freguesia (Ilha do Governador) / Tauá / Praia da Bandeira / Bancários / Jardim Guanabara,80 - 63%,Veículo de Passeio,37,49,11,12,10,,Onda 1\nHAWK,28/09,AM1_19,A2_AM1,Freguesia (Ilha do Governador) / Tauá / Bancários,80 - 100%,Veículo de Passeio,48,89,11,39,0,,Onda 1\nECO EXPRESS,28/09,AM1_2,H17_AM1,Mantiquira / Vila Santa Alice / Xerém / Parque Xerém,R39 - 100%,Veículo de Passeio,26,35,15,0,0,,Onda 1\nHAWK,28/09,AM1_20,G3_AM1,\"ROTA MÃE - 6 SACAS - 228, 229, 230, 231, 232, 233\",-100%,VUC Dedicado com Ajudante,1,1,0,0,0,,Onda 4\nHAWK,28/09,AM1_20_1,SACA,Galeão / Cidade Universitária / CCS - Centro de Ciências da Saúde / Jardim Carioca,R83 - 97%,Veículo de Passeio,49,70,20,1,0,,SEM ONDA\nHAWK,28/09,AM1_20_2,SACA,Bancários / Freguesia (Ilha do Governador) / Tauá,80 - 100%,Veículo de Passeio,59,70,12,0,0,,SEM ONDA\nHAWK,28/09,AM1_20_3,SACA,Tauá / Cocotá / Freguesia (Ilha do Governador) / Praia da Bandeira / Jardim Carioca / Cacuia,80 - 67%,Veículo de Passeio,48,70,13,3,0,,SEM ONDA\nHAWK,28/09,AM1_20_4,SACA,Jardim Carioca / Tauá / Tubiacanga,83 - 41%,Veículo de Passeio,55,70,18,7,0,,SEM ONDA\nHAWK,28/09,AM1_20_5,SACA,Pitangueiras / Zumbi / Ribeira / Cacuia / Freguesia (Ilha do Governador) / Praia da Bandeira,82 - 96%,Veículo de Passeio,54,70,18,0,0,,SEM ONDA\nHAWK,28/09,AM1_20_6,SACA,Jardim Carioca / Cacuia / Cocotá / Praia da Bandeira / Pitangueiras,82 - 99%,Veículo de Passeio,44,70,8,17,0,,SEM ONDA\nMELI EXTRA,28/09,AM1_21,A17_AM1,Moneró - Ilha Do Governador / Moneró,80 - 100%,Veículo de Passeio,5,47,1,41,0,,Onda 4\nMELI EXTRA,28/09,AM1_22,C17_AM1,Jardim Guanabara,83 - 100%,Veículo de Passeio,16,30,14,0,0,,Onda 4\nHAWK,28/09,AM1_23,A15_AM1,Portuguesa / Jardim Carioca / Moneró / Tauá,80 - 93%,Veículo de Passeio,37,54,11,0,0,,Onda 1\nMELI EXTRA,28/09,AM1_24,A11_AM1,Jardim Guanabara / Cacuia,83 - 98%,Veículo de Passeio,47,57,8,0,0,,Onda 4\nKANGU,28/09,AM1_25,A5_AM1,Jardim Guanabara / Portuguesa,83 - 100%,Veículo de Passeio,58,69,8,0,0,,Onda 4\nKANGU,28/09,AM1_26,A4_AM1,Jardim Guanabara,R83 - 65%,Veículo de Passeio,61,71,4,0,0,,Onda 4\nKANGU,28/09,AM1_27,C7_AM1,Portuguesa / Jardim Guanabara / Galeão,83 - 87%,Veículo de Passeio,51,68,23,0,0,,Onda 4\nMELI EXTRA,28/09,AM1_28,C16_AM1,Portuguesa / Jardim Guanabara,83 - 100%,Veículo de Passeio,19,32,9,0,0,,Onda 4\nONTIME,28/09,AM1_29,J3_AM1,ROTA MÃE - 1 SACAS - 204,R24 - 89%,Veículo de Passeio,4,9,3,0,0,,Onda 4\nONTIME,28/09,AM1_29_5,SACA,Bonsucesso / Ramos,R24 - 46%,Walker,37,50,21,4,0,,SEM ONDA\nECO EXPRESS,28/09,AM1_3,B9_AM1,Santo Antônio / Vila Canaan / Parque Eldorado / Vila Bonança / Mantiquira / Santa Cruz da Serra / Jardim Olimpo / Vila Santa Alice,R35 - 84%,Veículo de Passeio,44,55,9,0,0,,Onda 1\nALC,28/09,AM1_30,D4_AM1,Bonsucesso / Ramos,R24 - 70%,Veículo de Passeio,74,102,65,0,0,,Onda 1\nONTIME,28/09,AM1_31,I5_AM1,Ramos / Bonsucesso / Higienópolis / Manguinhos / Olaria / Jacaré,R24 - 80%,Veículo de Passeio,59,70,23,0,0,,Onda 2\nONTIME,28/09,AM1_32,H6_AM1,Manguinhos / Jacarezinho / Bonsucesso / Benfica / Higienópolis / Jacaré,R18 - 42%,Veículo de Passeio,41,62,24,0,0,,Onda 1\nALC,28/09,AM1_33,H7_AM1,Bonsucesso / Higienópolis / Manguinhos,R14 - 92%,Veículo de Passeio,32,52,41,0,0,,Onda 1\nALC,28/09,AM1_34,I1_AM1,Ramos / Bonsucesso,R24 - 93%,Veículo de Passeio,35,103,44,30,0,,Onda 1\nONTIME,28/09,AM1_35,D9_AM1,Manguinhos / Inhaúma / Higienópolis / Del Castilho / Bonsucesso,R14 - 98%,Veículo de Passeio,29,41,13,0,0,,Onda 2\nONTIME,28/09,AM1_36,G5_AM1,\"ROTA MÃE - 4 SACAS - 240, 241, 242, 243\",R14 - 50%,VUC Dedicado com Ajudante,1,2,0,0,1,,Onda 4\nONTIME,28/09,AM1_36_1,SACA,Del Castilho / Higienópolis / Inhaúma / Bonsucesso / Manguinhos,R14 - 100%,Veículo de Passeio,11,55,2,39,0,,SEM ONDA\nONTIME,28/09,AM1_36_2,SACA,Inhaúma / Del Castilho / Benfica,R14 - 87%,Motocicleta,6,15,2,0,0,,SEM ONDA\nONTIME,28/09,AM1_36_3,SACA,Higienópolis / Maria da Graça / Del Castilho / Bonsucesso / Manguinhos,R14 - 100%,Motocicleta,35,36,9,0,0,,SEM ONDA\nONTIME,28/09,AM1_36_4,SACA,Maria da Graça / Manguinhos / Benfica / Bonsucesso / Jacaré / Jacarezinho,R14 - 55%,Motocicleta,15,20,3,0,0,,SEM ONDA\nESVAZIAR,28/09,AM1_37,I18_AM1,Maria da Graça / Higienópolis,R14 - 100%,Veículo de Passeio,10,11,3,0,0,,Onda 4\nMELI EXTRA,28/09,AM1_38,C11_AM1,Maria Da Graça / Del Castilho / Higienópolis / Maria da Graça,R14 - 100%,Veículo de Passeio,8,54,2,31,0,,Onda 4\nONTIME,28/09,AM1_39,I15_AM1,Ramos / Olaria / Manguinhos,R24 - 94%,Veículo de Passeio,30,51,22,19,0,,Onda 1\nPARCEIRO,28/09,AM1_4,C5_AM1,Chácaras Rio-Petrópolis / Vila Santa Cruz / Parque Eldorado / Vila São Judas Tadeu / Santa Cruz da Serra / Chácaras Rio-petrópolis / Vila Santa Alice / Capivari / Jardim Primavera,R47 - 49%,Veículo de Passeio,69,82,9,9,0,,Onda 1\nDECARGO,28/09,AM1_40,B16_AM1,Jardim Primavera / Campos Elíseos,R33 - 100%,Veículo de Passeio,4,32,6,25,0,,Onda 2\nM.J SIMÕES,28/09,AM1_41,C9_AM1,Parque Paulista / Duque De Caxias / Santa Cruz da Serra,R38 - 92%,Veículo de Passeio,13,65,10,49,6,,Onda 1\nM.J SIMÕES,28/09,AM1_42,B15_AM1,Santa Cruz da Serra / Chácaras Arcampo / Vila Maria Helena / Parque Santa Lúcia / Vila Santa Cruz,R35 - 84%,Veículo de Passeio,31,38,7,0,0,,Onda 1\nM.J SIMÕES,28/09,AM1_43,D12_AM1,Santa Cruz da Serra / Parada Morabi / Jardim Anhangá / Taquara / Barro Branco / Jardim Rotsen / Jardim Barro Branco / Parque Paulista / Vila Santa Cruz,R36 - 69%,Veículo de Passeio,26,42,7,12,7,,Onda 2\nM.J SIMÕES,28/09,AM1_44,D13_AM1,Parada Angélica / Vila Angélica / Jardim Imbariê / Imbariê / Vila Sapê / Santa Lúcia / Vila Bernadete / Parque Santa Lúcia / Vila Santa Cruz / Parque Santo Antônio / Vila Capixaba,R36 - 97%,Veículo de Passeio,29,32,3,3,2,,Onda 2\nDECARGO,28/09,AM1_45,I4_AM1,Parque São Pedro de Alcantara / Santa Cruz da Serra / Campos Elíseos / Jardim Nossa Senhora do Carmo / Fonseca / Parque Império / Vila Actura / Parque Marilandia / Jardim Piratininga / Jardim Primavera / Chácaras Rio-Petrópolis,R33 - 96%,Veículo de Passeio,62,72,28,0,0,,Onda 1\nDECARGO,28/09,AM1_46,A9_AM1,Jardim Primavera / Jardim primavera / Campos Elíseos / Jardim Santana do Pilar / Parque Marilandia / Parque Marilândia / Parque Chuno,R33 - 100%,Veículo de Passeio,52,61,9,8,2,,Onda 1\nDECARGO,28/09,AM1_47,D6_AM1,Jardim Primavera / Chácaras Rio-Petrópolis / Saracuruna / Vila Maria Helena,R33 - 99%,Veículo de Passeio,61,81,29,0,0,,Onda 1\nM.J SIMÕES,28/09,AM1_48,B10_AM1,Jardim Anhangá / Parada Morabi / Imbariê / jardim anhanga / Vila Ema,R36 - 100%,Veículo de Passeio,38,61,8,23,8,,Onda 1\nECO EXPRESS,28/09,AM1_49,C8_AM1,Chácaras Arcampo / Santa Cruz da Serra / Vila Santa Cruz / Santa Cruz Da Serra / Vila Canaan / Vila São Judas Tadeu,R35 - 87%,Veículo de Passeio,50,61,20,8,0,,Onda 1\nECO EXPRESS,28/09,AM1_5,J6_AM1,\"ROTA MÃE - 4 SACAS - 218, 219, 220, 221\",R39 - 75%,VUC Dedicado com Ajudante,1,4,2,0,3,,Onda 4\nECO EXPRESS,28/09,AM1_5_1,SACA,Mantiquira / Amapá / Vila Santa Alice / Santo Antônio / Vila Operária / Xerém / Vila Nossa Senhora das Graças,R39 - 82%,Veículo de Passeio,34,38,7,0,0,,SEM ONDA\nECO EXPRESS,28/09,AM1_5_2,SACA,Parque Xerém / Xerém,R39 - 100%,Veículo de Passeio,16,30,1,15,0,,SEM ONDA\nECO EXPRESS,28/09,AM1_5_3,SACA,Mantiquira / Xerém / Amapá / Vila Santa Alice / Parque Xerém,R39 - 100%,Veículo de Passeio,47,54,6,0,0,,SEM ONDA\nECO EXPRESS,28/09,AM1_5_4,SACA,Mantiquira / Vila Santa Alice / Parque Xerém / Xerém / Amapá,R39 - 100%,Veículo de Passeio,36,44,22,0,0,,SEM ONDA\nDECARGO,28/09,AM1_50,A13_AM1,Cangulo / Parque Chuno / Jardim Rosário / Parque João Pessoa / Jardim Balneário Ana Clara / Saracuruna,R33 - 100%,Veículo de Passeio,48,55,5,0,0,,Onda 2\nM.J SIMÕES,28/09,AM1_51,G4_AM1,\"ROTA MÃE - 5 SACAS - 234, 235, 239, 237, 238\",R36 - 83%,VUC Dedicado com Ajudante,1,88,3,0,87,,Onda 4\nM.J SIMÕES,28/09,AM1_51_1,SACA,Taquara / Jardim Rotsen / Jardim Imbariê / Parada Angélica / Parque Santa Lúcia / Imbariê / Barro Branco / Jardim Anhangá / Vila Ema,R36 - 100%,Veículo de Passeio,39,55,3,15,0,,SEM ONDA\nM.J SIMÕES,28/09,AM1_51_2,SACA,Parada Angélica / Vila Angélica / Taquara / Santa Lúcia / Jardim Imbariê / Vila Araci (Imbariê),R36 - 100%,Veículo de Passeio,44,51,5,0,0,,SEM ONDA\nM.J SIMÕES,28/09,AM1_51_3,SACA,Parque Paulista / Vila Santa Cruz / Jardim Barro Branco / Chácaras Arcampo / Barro Branco / Parque A Equitativa,R35 - 65%,Veículo de Passeio,46,48,12,0,0,,SEM ONDA\nM.J SIMÕES,28/09,AM1_51_4,SACA,Parque Paulista / Chácaras Arcampo / Duque De Caxias / Vila Maria Helena / Vila Santa Cruz / Nova Campinas,R38 - 55%,Veículo de Passeio,45,51,6,5,0,,SEM ONDA\nM.J SIMÕES,28/09,AM1_51_5,SACA,Parque Estrela / Vila Cocota / Jardim Anhangá / Imbariê / Jardim Imbariê / Jardim Barro Branco / Parque Santa Rosa / Vila Ema / Vila Sapê,R36 - 100%,Veículo de Passeio,46,51,10,1,0,,SEM ONDA\nPRALOG,28/09,AM1_52,D5_AM1,Laranjeiras / Cosme Velho / Santa Teresa,11 - 99%,Utilitário TKS 2025,53,86,21,0,0,,Onda 2\nPARCEIRO,28/09,AM1_53,B2_AM1,Botafogo / Laranjeiras / Cosme Velho / Centro / saracuruna,11 - 92%,Utilitários SDD,84,112,15,0,0,,Onda 1\nPRALOG,28/09,AM1_54,H2_AM1,Laranjeiras / Catete / Flamengo / Botafogo,22 - 51%,Van Frota Fixa - Equipe única,62,156,36,26,1,,Onda 1\nPRALOG,28/09,AM1_55,J7_AM1,Urca / Botafogo / URCA,15 - 100%,Van Média Elétrica,70,139,46,12,0,,Onda 1\nONTIME,28/09,AM1_56,C1_AM1,Botafogo / Humaitá,15 - 100%,Utilitários SDD,88,128,25,0,0,,Onda 1\nONTIME,28/09,AM1_57,B1_AM1,Botafogo / Flamengo,15 - 90%,Utilitários SDD,89,137,24,0,0,,Onda 1\nPARCEIRO,28/09,AM1_58,H3_AM1,Botafogo,15 - 100%,Utilitários SDD,83,139,42,0,0,,Onda 1\nPARCEIRO,28/09,AM1_59,H4_AM1,Botafogo,15 - 100%,Utilitários SDD,78,138,46,0,0,,Onda 1\nDELUNA,28/09,AM1_6,J1_AM1,\"ROTA MÃE - 2 SACAS - 200, 201\",18 - 95%,Veículo de Passeio,5,20,13,0,0,,Onda 4\nDELUNA,28/09,AM1_6_1,SACA,Glória / Laranjeiras / Catete,11 - 75%,Motocicleta,13,16,3,1,0,,SEM ONDA\nDELUNA,28/09,AM1_6_2,SACA,Catete / Glória / Flamengo,22 - 88%,Motocicleta,39,40,12,0,0,,SEM ONDA\nPARCEIRO,28/09,AM1_60,D1_AM1,Humaitá / Botafogo,15 - 100%,Utilitários SDD,90,147,49,0,0,,Onda 1\nMELI EXTRA,28/09,AM1_61,I16_AM1,Botafogo,15 - 100%,Veículo de Passeio,19,33,8,0,0,,Onda 4\nKANGU,28/09,AM1_62,I10_AM1,Glória / Flamengo / Catete,22 - 72%,Veículo de Passeio,39,64,22,0,0,,Onda 4\nKANGU,28/09,AM1_63,I2_AM1,Flamengo / Laranjeiras / Catete / Edifício 200 / Condomínio Edifício Internacional Rio,22 - 59%,Veículo de Passeio,73,97,31,2,0,,Onda 4\nMELI EXTRA,28/09,AM1_64,C13_AM1,Méier / Todos os Santos / Engenho de Dentro,R6 - 100%,Veículo de Passeio,5,47,1,40,0,,Onda 4\nMELI EXTRA,28/09,AM1_65,C15_AM1,Méier / Todos os Santos / Engenho de Dentro,R6 - 100%,Veículo de Passeio,8,35,0,20,0,,Onda 4\nMELI EXTRA,28/09,AM1_66,I6_AM1,Engenho de Dentro / Encantado / Méier,R6 - 100%,Veículo de Passeio,43,68,17,0,0,,Onda 4\nMELI EXTRA,28/09,AM1_67,I14_AM1,Méier / Engenho Novo / Todos os Santos,R6 - 87%,Veículo de Passeio,45,60,24,0,0,,Onda 4\nESVAZIAR,28/09,AM1_68,C18_AM1,Sampaio / Engenho Novo / Méier,R22 - 92%,Veículo de Passeio,4,25,2,0,0,,Onda 4\nALC,28/09,AM1_69,I3_AM1,Engenho Novo / Lins de Vasconcelos,R31 - 60%,Veículo de Passeio,55,73,17,0,0,,Onda 1\nDELUNA,28/09,AM1_7,H5_AM1,Centro / Santa Teresa / Cidade Nova / Rio de Janeiro / Catumbi / Rio Comprido / Santo Cristo / Estácio,19 - 35%,Veículo de Passeio,57,72,32,11,0,,Onda 1\nESVAZIAR,28/09,AM1_70,I17_AM1,Engenho Novo / Méier,R31 - 67%,Veículo de Passeio,11,27,6,0,0,,Onda 4\nMELI EXTRA,28/09,AM1_71,I11_AM1,Engenho de Dentro / Méier / Todos os Santos,R6 - 100%,Veículo de Passeio,55,64,23,0,0,,Onda 4\nESVAZIAR,28/09,AM1_72,B18_AM1,Riachuelo / Jacaré / São Francisco Xavier,R22 - 100%,Veículo de Passeio,9,23,3,0,0,,Onda 4\nALC,28/09,AM1_73,A12_AM1,Riachuelo / Engenho Novo / Sampaio,R22 - 68%,Veículo de Passeio,33,56,10,0,0,,Onda 2\nALC,28/09,AM1_74,B4_AM1,Rocha / Vila Isabel / São Francisco Xavier / Maracanã / Riachuelo,R31 - 62%,Veículo de Passeio,44,63,15,0,0,,Onda 1\nALC,28/09,AM1_75,B13_AM1,Méier / Sampaio / Riachuelo / Rocha / Engenho Novo,R31 - 61%,Veículo de Passeio,38,97,16,35,6,,Onda 2\nM.J SIMÕES,28/09,AM1_76,A6_AM1,Jacaré / Jacarezinho / Engenho Novo / Sampaio,R22 - 100%,Veículo de Passeio,46,72,15,20,6,,Onda 1\nM.J SIMÕES,28/09,AM1_77,D7_AM1,São Francisco Xavier / Rocha / Riachuelo / Jacaré / Benfica,R22 - 97%,Veículo de Passeio,56,79,35,0,0,,Onda 1\nDELUNA,28/09,AM1_78,H14_AM1,Centro,18 - 59%,Veículo de Passeio,16,37,34,0,0,,Onda 1\nDELUNA,28/09,AM1_79,H8_AM1,Centro / Edifício Big,16 - 86%,Veículo de Passeio,19,50,41,0,0,,Onda 1\nKANGU,28/09,AM1_8,I9_AM1,Glória / Centro / Catete / Santa Teresa,22 - 59%,Veículo de Passeio,36,66,18,17,0,,Onda 4\nDELUNA,28/09,AM1_80,D3_AM1,Centro / São Cristóvão / Edifício Buenos Aires / Edifício Ceciliano de Andrade,16 - 92%,Veículo de Passeio,70,111,81,0,0,,Onda 1\nDELUNA,28/09,AM1_81,I7_AM1,Centro,16 - 99%,Veículo de Passeio,48,67,62,0,0,,Onda 1\nDELUNA,28/09,AM1_82,H12_AM1,CENTRO / Centro,16 - 95%,Veículo de Passeio,15,43,16,27,0,,Onda 2\nDELUNA,28/09,AM1_83,H15_AM1,Centro,16 - 100%,Veículo de Passeio,9,36,32,0,0,,Onda 2\nDELUNA,28/09,AM1_84,H9_AM1,Edifício Cândido Mendes / Centro,16 - 96%,Veículo de Passeio,7,49,21,17,0,,Onda 2\nDELUNA,28/09,AM1_85,H1_AM1,Centro / Baia de Guanabara / Edifício Engenheiro Marcos Hazan / Edifício Christian Bernard / Edifício Darke / Edifício Santos Vahlis / Edifício Palácio Austregésilo de Athayde,18 - 78%,Utilitários,69,130,88,0,0,,Onda 1\nDELUNA,28/09,AM1_86,D2_AM1,Centro / Edifício Avenida Central / Edifício Barão de Mauá / Edifício Palácio Austregésilo de Athayde / Edifício Santos Dumont,18 - 56%,Utilitários,67,143,106,10,0,,Onda 1\nALC,28/09,AM1_87,B17_AM1,Méier / Lins de Vasconcelos / Engenho Novo / Vaz Lobo,R32 - 85%,Veículo de Passeio,15,26,4,0,0,,Onda 2\nESVAZIAR,28/09,AM1_88,D18_AM1,Méier / Bonsucesso / Jacaré / Bangu / Dendê / Centro,R6 - 36%,Veículo de Passeio,9,22,1,0,0,,Onda 2\nPARCEIRO,28/09,AM1_89,A10_AM1,Engenho de Dentro / Méier / Lins de Vasconcelos,R6 - 69%,Veículo de Passeio,41,59,8,0,0,,Onda 1\nCOOPMETRO,28/09,AM1_9,B14_AM1,Jardim Primavera / Parque João Pessoa / Saracuruna / Parque São Pedro de Alcantara,R33 - 100%,Veículo de Passeio,15,42,3,26,0,,Onda 2\nHAWK,28/09,AM1_90,C3_AM1,Méier / Lins de Vasconcelos / Engenho Novo,R32 - 74%,Veículo de Passeio,75,89,10,0,0,,Onda 1\nPARCEIRO,28/09,AM1_91,D17_AM1,Méier / Jacaré / Lins de Vasconcelos / Engenho de Dentro / Pitangueiras / Centro,R32 - 46%,Veículo de Passeio,16,24,4,0,0,,Onda 2\nCOOPMETRO,28/09,AM1_92,A14_AM1,São Cristóvão,R18 - 100%,Veículo de Passeio,9,55,4,45,0,,Onda 2\nDECARGO,28/09,AM1_93,D16_AM1,Saúde / Gamboa / Santo Cristo,R16 - 100%,Veículo de Passeio,10,26,14,0,0,,Onda 2\nCOOPMETRO,28/09,AM1_94,B12_AM1,Santo Cristo / São Cristóvão / Praça da Bandeira / Centro,R18 - 58%,Veículo de Passeio,23,48,20,0,0,,Onda 2\nCOOPMETRO,28/09,AM1_95,I13_AM1,São Cristóvão / Mangueira / Vasco da Gama,R18 - 100%,Veículo de Passeio,32,63,37,0,0,,Onda 1\nDECARGO,28/09,AM1_96,C10_AM1,Gamboa / Centro / Saúde / Banco Central do Brasil,R16 - 89%,Veículo de Passeio,27,56,38,0,0,,Onda 1\nDECARGO,28/09,AM1_97,C12_AM1,Santo Cristo / Gamboa,R16 - 100%,Veículo de Passeio,29,52,20,0,0,,Onda 1\nCOOPMETRO,28/09,AM1_98,H11_AM1,São Cristóvão / Benfica / Caju,R18 - 98%,Veículo de Passeio,32,44,23,0,0,,Onda 1\nCOOPMETRO,28/09,AM1_99,C4_AM1,São Cristóvão,R18 - 100%,Veículo de Passeio,54,83,50,0,0,,Onda 1";
+/* ============ PLANEJAMENTO ============ */
+const normTxt=s=>String(s??"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toUpperCase().replace(/\s+/g," ").trim();
+const ALIASES=[["ME",["MELI EXTRA"]],["EC",["ECO EXPRESS","ECOEXPRESS"]],["MS",["SIMOES"]],["HW",["HAWK"]],["PL",["PRALOG"]],["OT",["ONTIME","ON TIME"]],["PC",["PARCEIRO"]],["KG",["KANGU"]],["DL",["DELUNA"]],["CM",["COOPMETRO"]],["DC",["DECARGO"]],["AL",["ALC"]],["PY",["PY"]]];
+function matchCarrier(raw){const n=normTxt(raw);if(!n)return null;if(CARRIERS[n]&&n!=="X")return n;
+  for(const [k,al] of ALIASES)if(al.some(a=>n===a||n.includes(a)))return k;return null}
+const FIELDS=[
+  {id:"gaiola",label:"Gaiola",re:/GAIOLA|CAGE/},
+  {id:"rota",label:"Rota",re:/ROTA|ROUTE/},
+  {id:"transp",label:"Transportadora",re:/TRANSP|CARRIER|EMPRESA|SIGLA|MLP/},
+  {id:"onda",label:"Onda",re:/ONDA|WAVE/},
+  {id:"parada",label:"Paradas",re:/PARADA|STOP/},
+  {id:"saca",label:"Saca",re:/^SACA|BAG/},
+  {id:"modal",label:"Modal",re:/MODAL|VEICULO/},
+  {id:"bairros",label:"Bairros",re:/BAIRRO/},
+  {id:"rua",label:"Rua",re:/^RUA/},
+  {id:"vaga",label:"Vaga",re:/^VAGA/},
+];
+function guessMap(headers){const m={};const used=new Set();
+  FIELDS.forEach(f=>{const h=headers.find(h=>!used.has(h)&&f.re.test(normTxt(h)));if(h){m[f.id]=h;used.add(h)}});
+  if(!m.transp&&headers[0]&&!used.has(headers[0]))m.transp=headers[0];
+  return m}
+// acha a linha de cabeçalho (a planilha pode ter título em cima)
+// planilha sem cabeçalho: descobre cada coluna pelo conteúdo
+function inferHeaders(aoa){
+  const data=aoa.filter(r=>r.some(c=>c));if(!data.length)return null;const n=Math.max(...data.map(r=>r.length));const smp=data.slice(0,80);
+  const tests={transp:v=>!!matchCarrier(v)||/^ESVAZIAR$/i.test(v),data:v=>/^\d{1,2}\/\d{1,2}(\/\d{2,4})?$/.test(v),
+    rota:v=>/^[A-Z]{2,4}\d*_\d+(_\d+)*$/i.test(v),gaiola:v=>/^SACA$/i.test(v)||/^[A-Z]{1,3}\d+_[A-Z]{2,4}\d*$/i.test(v),
+    onda:v=>/^(ONDA\s*\d+|SEM ONDA)$/i.test(v),parada:v=>/^\d{1,4}$/.test(v)};
+  const names={transp:"Transportadora",data:"Data",rota:"Rota",gaiola:"Gaiola",onda:"Onda",parada:"Paradas"};
+  const headers=[];const used=new Set();
+  for(let i=0;i<n;i++){let bestK=null,bestR=0;Object.keys(tests).forEach(k=>{if(used.has(k))return;const vals=smp.map(r=>r[i]||"").filter(Boolean);if(!vals.length)return;
+      const r=vals.filter(tests[k]).length/vals.length;if(r>bestR){bestR=r;bestK=k}});
+    if(bestK&&bestR>=.6){used.add(bestK);headers.push(names[bestK])}else headers.push("Coluna "+(i+1))}
+  if(!(used.has("rota")||used.has("gaiola"))||!used.has("transp"))return null;
+  const rows=data.map(r=>{const o={};headers.forEach((h,i)=>o[h]=r[i]??"");return o});
+  return {rows,headers,title:"",headerRow:0,noHeader:true};
+}
+function fromAOA(aoa){
+  aoa=aoa.map(r=>(r||[]).map(c=>String(c??"").trim()));
+  let hi=0,best=-1;
+  aoa.slice(0,20).forEach((r,i)=>{const sc=r.filter(c=>c&&FIELDS.some(f=>f.re.test(normTxt(c)))).length;if(sc>best){best=sc;hi=i}});
+  if(best<2){const inf=inferHeaders(aoa);if(inf)return inf}
+  const seen={};const headers=aoa[hi].map((h,i)=>{let n=h||("Coluna "+(i+1));if(seen[n])n+=" ("+(++seen[n])+")";else seen[n]=1;return n});
+  const title=aoa.slice(0,hi).flat().filter(Boolean).join(" ");
+  const rows=aoa.slice(hi+1).filter(r=>r.some(c=>c)).map(r=>{const o={};headers.forEach((h,i)=>o[h]=r[i]??"");return o});
+  return {rows,headers,title,headerRow:hi+1};
+}
+function detectCiclo(title,rows,m){
+  const t=normTxt(title+" "+rows.slice(0,30).map(r=>(r[m.rota]||"")+" "+(r[m.gaiola]||"")).join(" "));
+  if(/CHP|AM0/.test(t))return "AM0-CHP";
+  if(/_SD|SD_|PLANEJAMENTO SD/.test(t))return "SD";
+  if(/_PM\d?|PM\d?_|PLANEJAMENTO PM/.test(t))return "PM";
+  if(/_AM\d?|AM\d?_|PLANEJAMENTO AM/.test(t))return "AM";
+  return null}
+const ondaNum=v=>{const d=String(v??"").match(/\d+/);return d?+d[0]:null};
+const numOr=v=>{const s=String(v??"").trim();return s!==""&&!isNaN(+s)?+s:s};
+function aggregate(rows,m){
+  const keyOf=r=>String(r[m.rota]||r[m.gaiola]||"").trim();
+  const by=new Map();
+  rows.forEach(r=>{const key=keyOf(r);if(!key)return;const kk=key+"|"+normTxt(r[m.transp]);if(!by.has(kk))by.set(kk,[]);by.get(kk).push(r)});
+  const items=[];
+  by.forEach(list=>{const r0=list[0];const multi=list.length>1;
+    const distinct=f=>m[f]?[...new Set(list.map(r=>String(r[m[f]]??"").trim()).filter(Boolean))]:[];
+    let ruas=null;
+    if(m.rua){const n=ondaNum(r0[m.rua]);if(n&&n<=5)ruas=[n]}
+    if(!ruas&&m.vaga){const v=ondaNum(r0[m.vaga]);if(v&&v<=97)ruas=[rua(v)]}
+    const bairros=m.bairros?String(r0[m.bairros]||""):"";
+    const sm=normTxt(bairros).match(/ROTA MAE.*?SACAS?\s*-\s*([\d,\s]+)/);
+    items.push({key:keyOf(r0),rota:m.rota?String(r0[m.rota]||"").trim():"",gaiola:m.gaiola?String(r0[m.gaiola]||"").trim():"",
+      transpRaw:String(r0[m.transp]??"").trim(),k:matchCarrier(r0[m.transp]),onda:m.onda?ondaNum(r0[m.onda]):null,
+      parada:multi?distinct("parada").length:numOr(m.parada?r0[m.parada]:""),
+      saca:multi?(distinct("saca").length||""):(m.saca?String(r0[m.saca]||"").trim():""),
+      modal:m.modal?String(r0[m.modal]||"").trim():"",bairros:sm?"":bairros,
+      sacaIds:sm?sm[1].split(",").map(s=>s.trim()).filter(Boolean):[],
+      pacotes:list.length,multi,ruasFix:ruas,children:[]});
+  });
+  // sacas (gaiola "SACA") vão para dentro da rota mãe
+  const byKey=new Map(items.map(i=>[i.key,i]));const out=[];
+  items.forEach(i=>{const isSaca=normTxt(i.gaiola)==="SACA";const parentKey=i.rota.replace(/_\d+$/,"");const p=byKey.get(parentKey);
+    if(isSaca&&p&&p!==i)p.children.push(i);else out.push(i)});
+  out.forEach(i=>i.children.sort((a,b)=>a.rota.localeCompare(b.rota,"pt",{numeric:true})));
+  return out;
+}
+function carrierRuas(L,k){const s=new Set();Object.entries(L.map).forEach(([v,c])=>{if(c===k)s.add(rua(+v))});return [...s].sort()}
+const RUA_NOME=["","coluna esquerda (ímpares)","coluna esquerda (pares)","ao lado da esteira","lado direito (VUC)","frente do mezanino"];
+function parseDefault(){try{const wb=XLSX.read(DEFAULT_PLAN_CSV,{type:"string",raw:true});const aoa=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:false,defval:""});
+  const t=fromAOA(aoa);return {...t,name:"PLANEJAMENTO AM1 AJUSTADO",at:"28/09/2026",map:guessMap(t.headers),isDefault:true}}catch(e){return null}}
+const plural=(n,a,b)=>n+" "+(n===1?a:b);
+
+let CICLO_TAG="";
+const short=x=>{x=String(x||"");if(!CICLO_TAG)return x;return x.replace(new RegExp("_"+CICLO_TAG+"$"),"").replace(new RegExp("^"+CICLO_TAG+"_"),"")};
+function cicloTag(rows,m){const c={};rows.forEach(r=>{[r[m.gaiola],r[m.rota]].forEach(v=>{const x=String(v||"").trim();let t=x.match(/_([A-Z]{2}\d*)$/);if(t)c[t[1]]=(c[t[1]]||0)+1;t=x.match(/^([A-Z]{2}\d*)_\d/);if(t)c[t[1]]=(c[t[1]]||0)+1})});
+  const best=Object.entries(c).sort((a,b)=>b[1]-a[1])[0];return best&&best[1]>=3?best[0]:""}
+function CountUp({v}){const [n,setN]=useState(0);useEffect(()=>{const c=Motion.animate(0,v,{duration:1.1,ease:[.22,1,.36,1],onUpdate:x=>setN(Math.round(x))});return()=>c.stop()},[v]);return n.toLocaleString("pt-BR")}
+function RouteRow({r}){
+  const [open,setOpen]=useState(false);const main=r.gaiola&&normTxt(r.gaiola)!=="SACA"?r.gaiola:r.rota;const sub=main===r.rota?"":r.rota;
+  return html`<div class="py-2 border-t border-white/[.06] first:border-t-0">
+    <div class="flex items-baseline justify-between gap-2">
+      <span class="min-w-0 flex items-baseline gap-1.5"><span class=${"font-mono text-[10px] font-bold px-1.5 py-0.5 rounded "+(r.vaga?"":"opacity-50")} style=${{background:r.vaga?"var(--accent)":"rgba(255,255,255,.1)",color:r.vaga?"#04121b":"var(--muted)"}} title=${r.vaga?"Vaga "+r.vaga:"Sem vaga no layout"}>${r.vaga?"V"+r.vaga:"V—"}</span><span class="font-mono font-bold text-[13px] truncate">${short(main)}</span></span>
+      ${r.parada!==""&&html`<span class="font-mono text-xs tnum shrink-0" title="Paradas">${r.parada}<span class="text-muted text-[10px]"> par.</span></span>`}
+    </div>
+    ${(sub||r.modal||r.saca!=="")&&html`<div class="text-muted text-[10px] mt-0.5 truncate">${[sub?"Rota "+short(sub):"",r.modal,r.saca!==""?"Saca "+r.saca:""].filter(Boolean).join(" · ")}</div>`}
+    ${r.children.length>0&&html`<div class="mt-1.5">
+      <${motion.button} type="button" ...${tactile} onClick=${()=>setOpen(!open)} aria-expanded=${open}
+        class="text-[10px] font-semibold px-2 py-0.5 rounded-full" style=${{background:"rgba(255,181,71,.14)",color:"var(--amber)"}}>
+        ${plural(r.children.length,"saca","sacas")}${r.sacaIds.length?" · nº "+r.sacaIds.join(", "):""} ${open?"▴":"▾"}</${motion.button}>
+      <${AnimatePresence}>${open&&html`<${motion.div} initial=${{height:0,opacity:0}} animate=${{height:"auto",opacity:1}} exit=${{height:0,opacity:0}} class="overflow-hidden">
+        <div class="mt-1.5 pl-2 border-l border-[rgba(255,181,71,.35)] flex flex-col gap-1">
+          ${r.children.map(c=>html`<div key=${c.rota} class="flex justify-between gap-2 text-[11px]"><span class="font-mono truncate">${short(c.rota)}<span class="text-muted"> · ${c.modal}</span></span><span class="font-mono tnum shrink-0">${c.parada}</span></div>`)}
+        </div></${motion.div}>`}</${AnimatePresence}>
+    </div>`}
+  </div>`;
+}
+
+function OndaCol({list,o,solo}){
+  const items=list.filter(r=>(r.onda??"?")===o).sort((a,b)=>(a.vaga||999)-(b.vaga||999)||(a.gaiola||a.rota).localeCompare(b.gaiola||b.rota,"pt",{numeric:true}));
+  const par=items.reduce((a,r)=>a+(typeof r.parada==="number"?r.parada:0),0);
+  return html`<div class="min-w-0 rounded-2xl bg-white/[.03] border border-line p-3">
+    <div class="flex items-baseline justify-between gap-2 mb-1"><span class="font-display text-[11px] tracking-wide">${o==="?"?(solo?"Rotas":"Sem onda"):"Onda "+o}</span>
+      <span class="text-muted text-[10px] tnum">${plural(items.length,"rota","rotas")}${par?" · "+par+" par.":""}</span></div>
+    ${items.length?items.map(r=>html`<${RouteRow} key=${r.key} r=${r}/>`):html`<div class="text-muted text-xs py-2">—</div>`}
+  </div>`;
+}
+
+function CarrierBlock({gkey,list,ondas,note,vagas}){
+  const k=CARRIERS[gkey]?gkey:null;
+  const par=list.reduce((a,r)=>a+(typeof r.parada==="number"?r.parada:0),0);
+  const sacas=list.reduce((a,r)=>a+r.children.length,0);
+  return html`<${motion.div} initial=${{opacity:0,y:12}} animate=${{opacity:1,y:0}} transition=${{duration:.35}} class="rounded-3xl border border-line bg-white/[.02] p-4 min-w-0">
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mb-3">
+      ${k?html`<${Swatch} k=${k} size="lg"/>`:html`<span class="font-mono font-bold text-sm px-2.5 py-1 rounded-lg bg-white/10">${gkey.slice(0,3)}</span>`}
+      <span class="font-semibold">${k?CARRIERS[k].n:gkey}</span>
+      <span class="text-muted text-xs tnum">${plural(list.length,"rota","rotas")}${par?" · "+par+" paradas":""}${sacas?" · "+plural(sacas,"saca","sacas"):""}${vagas?" · vagas "+vagas:""}</span>
+      ${note&&html`<span class="text-[11px] px-2 py-0.5 rounded-full" style=${{background:"rgba(255,181,71,.12)",color:"var(--amber)"}}>${note}</span>`}
+    </div>
+    <div class="overflow-x-auto noscroll -mx-1 px-1">
+      <div class="grid gap-2" style=${ondas.length===1?{gridTemplateColumns:"1fr"}:{gridTemplateColumns:`repeat(${ondas.length},minmax(168px,1fr))`,minWidth:ondas.length*176}}>
+        ${ondas.map(o=>html`<${OndaCol} key=${o} list=${list} o=${o} solo=${ondas.length===1}/>`)}
+      </div>
+    </div>
+  </${motion.div}>`;
+}
+
+/* ============ GUIADA (por rua, tabela ROTA | ONDA | PARADAS | VAGA) ============ */
+const RUA_NOME_G=["","Coluna esquerda · ímpares","Coluna esquerda · pares","Ao lado da esteira","Lado direito · VUC","Frente do mezanino · Expedição"];
+function gName(r){return shortTag(r.gaiola&&normTxt(r.gaiola)!=="SACA"?r.gaiola:r.rota)}
+const byOndaVaga=(a,b)=>(a.onda||99)-(b.onda||99)||(a.vaga||999)-(b.vaga||999)||String(gName(a)).localeCompare(gName(b),"pt",{numeric:true});
+// rotas sem gaiola marcada no layout: interpreta o desenho e coloca cada rota numa vaga livre da transportadora
+function autoPlace(items,L){
+  const used=new Set(items.filter(r=>r.vaga).map(r=>r.vaga));Object.entries(L.tags||{}).forEach(([v,t])=>{if(t)used.add(+v)});
+  const order=v=>rua(v)===5?1000-v:v;const byK={};items.forEach(r=>{if(!r.vaga&&r.k)(byK[r.k]=byK[r.k]||[]).push(r)});
+  Object.keys(byK).forEach(k=>{const free=Object.keys(L.map).map(Number).filter(v=>L.map[v]===k&&!used.has(v)).sort((a,b)=>rua(a)-rua(b)||order(a)-order(b));
+    const cnt={};Object.keys(L.map).forEach(v=>{if(L.map[v]===k)cnt[rua(+v)]=(cnt[rua(+v)]||0)+1});const main=+Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a])[0]||null;
+    byK[k].sort(byOndaVaga).forEach((r,i)=>{if(free[i]){r.vaga=free[i];r.auto=true;r.rua=rua(free[i])}else{r.rua=main}})});
+  return items}
+function buildRuas(items){
+  return [1,2,3,4,5,null].map(n=>{const list=items.filter(r=>(r.rua??null)===n);if(!list.length)return null;
+    const m={};list.forEach(r=>{const k=r.k||r.name;(m[k]=m[k]||[]).push(r)});
+    const carriers=Object.keys(m).map(k=>({k:CARRIERS[k]?k:"",name:m[k][0].name,routes:m[k].sort(byOndaVaga)})).sort((a,b)=>Math.min(...a.routes.map(r=>r.vaga||999))-Math.min(...b.routes.map(r=>r.vaga||999)));
+    return {n,title:n?"RUA "+n:"SEM RUA DEFINIDA",sub:n?RUA_NOME_G[n]:"transportadora sem vaga no layout",count:list.length,carriers}}).filter(Boolean)}
+function guiadaText(cur,ciclo,items){const d=new Date().toLocaleDateString("pt-BR");let t=`*GUIADA – ${ciclo}*\nLayout ${cur} · ${d}\n`;
+  buildRuas(items).forEach(s=>{t+=`\n━━━━━━━━━━\n*GUIADA · ${s.title}*\n${s.sub}\n`;
+    s.carriers.forEach(c=>{t+=`\n▸ *${c.name}*\nROTA | ONDA | PARADAS | VAGA\n`;
+      c.routes.forEach(r=>{t+=`${gName(r)}${r.children.length?" (+"+r.children.length+" sacas)":""} | ${r.onda||"—"} | ${r.parada!==""?r.parada:"—"} | ${r.vaga||"—"}\n`})})});
+  return t}
+async function renderGuiadaPages(cur,ciclo,items){
+  try{await document.fonts.ready}catch(e){}
+  const ruas=buildRuas(items);const compact=items.length>60;
+  const W=1080,H=1920,P=32,TOP=172,BOT=H-76,RH=compact?62:74,CHH=54,RTH=92,KH=76,HALF=(W-2*P-16)/2;
+  const colsFull=[{t:"ROTA",x:P+26,al:"left"},{t:"ONDA",x:600,al:"center"},{t:"PARADAS",x:780,al:"center"},{t:"VAGA",x:950,al:"center"}];
+  const colsHalf=x0=>[{t:"ROTA",x:x0+22,al:"left"},{t:"ONDA",x:x0+268,al:"center"},{t:"PAR.",x:x0+358,al:"center"},{t:"VAGA",x:x0+444,al:"center"}];
+  const pages=[];
+  ruas.forEach(s=>{let pg=[],y=TOP;const start=cont=>{pg.push({t:"rua",s,cont,y});y+=RTH;pg.push({t:"cols",y});y+=CHH};
+    start(false);
+    s.carriers.forEach(c=>{if(y+KH+RH>BOT){pages.push({s,ops:pg});pg=[];y=TOP;start(true)}
+      pg.push({t:"car",c,y});y+=KH;
+      const lines=[];if(compact){for(let i=0;i<c.routes.length;i+=2)lines.push(c.routes.slice(i,i+2))}else c.routes.forEach(r=>lines.push([r]));
+      lines.forEach((ln,i)=>{if(y+RH>BOT){pages.push({s,ops:pg});pg=[];y=TOP;start(true);pg.push({t:"car",c,cont:true,y});y+=KH}
+        pg.push({t:"line",rs:ln,c,i,y});y+=RH})});
+    pages.push({s,ops:pg})});
+  const F=(w,s)=>`${w} ${s}px Onest, Arial, sans-serif`;const out=[];const total=pages.length;
+  for(let pi=0;pi<total;pi++){const cv=document.createElement("canvas");cv.width=W;cv.height=H;const g=cv.getContext("2d");
+    const rr=(x,y,w,h,r)=>{g.beginPath();g.moveTo(x+r,y);g.arcTo(x+w,y,x+w,y+h,r);g.arcTo(x+w,y+h,x,y+h,r);g.arcTo(x,y+h,x,y,r);g.arcTo(x,y,x+w,y,r);g.closePath()};
+    const pgS=pages[pi].s;
+    g.fillStyle="#f4f6f8";g.fillRect(0,0,W,H);g.fillStyle="#0a4d8c";g.fillRect(0,0,W,150);
+    g.fillStyle="#fff";g.textAlign="left";g.textBaseline="alphabetic";g.font=F(800,58);g.fillText("GUIADA · "+pgS.title,P,78);
+    g.font=F(600,28);g.fillText(`Ciclo ${ciclo} · Layout ${cur} · ${new Date().toLocaleDateString("pt-BR")}`,P,124);
+    g.textAlign="right";g.font=F(700,24);g.fillText(`página ${pi+1}/${total}`,W-P,124);
+    const drawRoute=(r,cc,x0,cols,y,big)=>{g.textBaseline="middle";g.fillStyle="#111";g.textAlign="left";g.font=F(800,big?38:32);let nm=gName(r);
+      const maxW=cols[1].x-cols[0].x-(big?60:40);while(g.measureText(nm).width>maxW&&nm.length>2)nm=nm.slice(0,-1);g.fillText(nm,cols[0].x,y+RH/2);
+      if(r.children.length){const w=g.measureText(nm).width;g.font=F(700,big?22:18);g.fillStyle="#b45309";g.fillText(`+${r.children.length}${big?" sacas":"s"}`,cols[0].x+w+8,y+RH/2+2)}
+      g.textAlign="center";g.font=F(800,big?36:30);g.fillStyle="#111";g.fillText(r.onda?String(r.onda):"—",cols[1].x,y+RH/2);g.fillText(r.parada!==""?String(r.parada):"—",cols[2].x,y+RH/2);
+      if(r.vaga){const pw=big?100:76;g.fillStyle="#0a4d8c";rr(cols[3].x-pw/2,y+10,pw,RH-20,10);g.fill();g.fillStyle="#fff";g.fillText(String(r.vaga),cols[3].x,y+RH/2)}else{g.fillStyle="#9ca3af";g.fillText("—",cols[3].x,y+RH/2)}};
+    pages[pi].ops.forEach(op=>{const y=op.y;g.textBaseline="middle";
+      if(op.t==="rua"){g.fillStyle="#111827";rr(P,y,W-2*P,78,14);g.fill();g.fillStyle="#fff";g.textAlign="left";g.font=F(800,40);g.fillText(op.s.title+(op.cont?" (continuação)":""),P+24,y+40);
+        g.textAlign="right";g.font=F(600,24);g.fillStyle="#cbd5e1";g.fillText(op.cont?"":plural(op.s.count,"rota","rotas"),W-P-24,y+40)}
+      if(op.t==="cols"){g.fillStyle="#374151";rr(P,y+4,W-2*P,42,10);g.fill();g.fillStyle="#fff";g.font=F(800,compact?20:24);
+        (compact?[...colsHalf(P),...colsHalf(P+HALF+16)]:colsFull).forEach(c=>{g.textAlign=c.al;g.fillText(c.t,c.x,y+26)})}
+      if(op.t==="car"){const cc=CARRIERS[op.c.k]||{bg:"#9ca3af",fg:"#fff"};
+        g.fillStyle=cc.bg;rr(P,y+8,W-2*P,58,12);g.fill();g.strokeStyle="rgba(0,0,0,.28)";g.lineWidth=2;g.stroke();
+        g.fillStyle=cc.fg;g.textAlign="left";g.font=F(800,34);g.fillText((op.c.k?op.c.k+"  ·  ":"")+op.c.name+(op.cont?" (cont.)":""),P+22,y+38);
+        const par=op.c.routes.reduce((a,r)=>a+(typeof r.parada==="number"?r.parada:0),0);
+        g.textAlign="right";g.font=F(700,24);g.fillText(plural(op.c.routes.length,"rota","rotas")+(par?" · "+par+" par.":""),W-P-22,y+39)}
+      if(op.t==="line"){const cc=CARRIERS[op.c.k]||{bg:"#9ca3af"};
+        if(compact){op.rs.forEach((r,j)=>{const x0=P+j*(HALF+16);g.fillStyle=op.i%2?"#eef1f5":"#ffffff";rr(x0,y+3,HALF,RH-6,10);g.fill();g.fillStyle=cc.bg;rr(x0,y+3,8,RH-6,4);g.fill();drawRoute(r,cc,x0,colsHalf(x0),y,false)})}
+        else{g.fillStyle=op.i%2?"#eef1f5":"#ffffff";rr(P,y+3,W-2*P,RH-6,10);g.fill();g.fillStyle=cc.bg;rr(P,y+3,10,RH-6,5);g.fill();drawRoute(op.rs[0],cc,P,colsFull,y,true)}}});
+    g.fillStyle="#0a4d8c";g.fillRect(0,H-64,W,64);g.fillStyle="#fff";g.font=F(700,24);g.textAlign="center";g.textBaseline="middle";g.fillText(`GUIADA · ${ciclo} · ${pgS.title} · Operação MEGARIO`,W/2,H-32);
+    out.push(await new Promise(r=>cv.toBlob(r,"image/png")))}
+  return out;
+}
+async function shareBlobs(blobs,base,text,setMsg,idx,openGroup){
+  if(isMobile()){try{const fs=blobs.map((b,i)=>new File([b],`${base}-${i+1}.png`,{type:"image/png"}));if(navigator.canShare&&navigator.canShare({files:fs})){await navigator.share({files:fs,text});setMsg("Escolha Operação MEGARIO e envie.");return}}
+    catch(x){if(x&&x.name==="AbortError"){setMsg("Compartilhamento cancelado.");return}}}
+  const i=idx||0;const url=megaUrl();let copied=false;try{await navigator.clipboard.write([new ClipboardItem({"image/png":blobs[i]})]);copied=true}catch(x){}
+  if(openGroup){const a=document.createElement("a");a.href=url||"https://web.whatsapp.com/";a.target="whatsapp_megario";a.rel="opener";document.body.appendChild(a);a.click();a.remove()}
+  setMsg(copied?`Página ${i+1} copiada: no grupo, Ctrl+V e Enter.`+(blobs.length>i+1?` Depois toque em "Copiar página ${i+2}".`:""):"Não deu para copiar sozinho, use Baixar.")}
+function GuiadaModal({cur,ciclo,items,onClose}){
+  const [blobs,setBlobs]=useState(null);const [urls,setUrls]=useState([]);const [msg,setMsg]=useState("");
+  useEffect(()=>{let us=[],ok=true;renderGuiadaPages(cur,ciclo,items).then(bs=>{if(!ok)return;us=bs.map(b=>URL.createObjectURL(b));setBlobs(bs);setUrls(us)});return()=>{ok=false;us.forEach(u=>URL.revokeObjectURL(u))}},[]);
+  const base=`guiada-${ciclo}-${new Date().toLocaleDateString("pt-BR").replace(/\//g,"-")}`;
+  const text=guiadaText(cur,ciclo,items);const autoN=items.filter(r=>r.auto).length;
+  const copyText=async()=>{try{await navigator.clipboard.writeText(text);setMsg("Texto da guiada copiado. Cole no grupo.")}catch(e){setMsg("Não deu para copiar o texto aqui.")}};
+  const pdfAll=async()=>{if(!blobs)return;if(!window.jspdf){setMsg("O gerador de PDF não carregou.");return}
+    const doc=new window.jspdf.jsPDF({orientation:"portrait",unit:"px",format:[1080,1920]});
+    for(let i=0;i<blobs.length;i++){const im=await new Promise(r=>{const m=new Image();m.onload=()=>r(m);m.src=urls[i]});const c=document.createElement("canvas");c.width=1080;c.height=1920;c.getContext("2d").drawImage(im,0,0);
+      if(i)doc.addPage([1080,1920],"portrait");doc.addImage(c.toDataURL("image/jpeg",.88),"JPEG",0,0,1080,1920)}
+    const b=doc.output("blob");const nm=base+".pdf";
+    try{const d=window.claude?.use?await window.claude.use("downloads"):null;if(d){await d.save({filename:nm,data:b});setMsg("PDF salvo com todas as páginas.");return}}catch(e){}
+    const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=nm;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),5000);setMsg("PDF com todas as páginas baixado. Dá para mandar o PDF direto no grupo.")};
+  const dlAll=async()=>{if(!blobs)return;for(let i=0;i<blobs.length;i++){const nm=`${base}-${i+1}.png`;
+    try{const d=window.claude?.use?await window.claude.use("downloads"):null;if(d){await d.save({filename:nm,data:blobs[i]});continue}}catch(e){}
+    const a=document.createElement("a");a.href=urls[i];a.download=nm;document.body.appendChild(a);a.click();a.remove();await new Promise(r=>setTimeout(r,300))}setMsg("Páginas baixadas.")};
+  return html`<${motion.div} class="fixed inset-0 z-[200] flex items-center justify-center p-4" initial=${{opacity:0}} animate=${{opacity:1}} exit=${{opacity:0}} style=${{background:"rgba(3,5,8,.72)",backdropFilter:"blur(6px)"}} onClick=${onClose}>
+    <${motion.div} onClick=${e=>e.stopPropagation()} initial=${{y:24}} animate=${{y:0}} exit=${{y:24,opacity:0}} transition=${spring} class="glass rounded-3xl p-4 sm:p-5 w-full max-w-4xl max-h-[92vh] flex flex-col gap-3" style=${{background:"rgba(16,20,26,.97)"}}>
+      <div class="flex flex-wrap items-center justify-between gap-3"><div><div class="text-[11px] uppercase tracking-[.16em] text-muted font-semibold">Informativo para o grupo · uma rua por página</div><div class="font-display text-lg">Guiada · ciclo ${ciclo}${blobs?" · "+plural(blobs.length,"página","páginas"):""}</div></div>
+        <button type="button" onClick=${onClose} class="text-muted hover:text-ink text-sm px-3 py-1.5 rounded-full border border-white/15">Fechar</button></div>
+      ${autoN>0&&html`<p class="text-xs rounded-xl px-3 py-2" style=${{background:"rgba(76,195,255,.08)",color:"var(--accent)"}}>${plural(autoN,"rota","rotas")} sem vaga marcada no layout: coloquei cada uma numa vaga livre da transportadora dela, pela ordem das ondas.</p>`}
+      <div class="flex-1 min-h-0 overflow-auto rounded-2xl bg-black/30 p-3">
+        ${urls.length?html`<div class="flex gap-3 overflow-x-auto pb-2">${urls.map((u,i)=>html`<div key=${u} class="shrink-0 flex flex-col gap-2 items-center" style=${{width:"min(300px,70vw)"}}>
+            <img src=${u} alt=${"Guiada página "+(i+1)} class="w-full h-auto rounded-xl shadow-lg"/>
+            <button type="button" onClick=${()=>shareBlobs(blobs,base,text,setMsg,i,false)} class="text-xs font-semibold px-3 py-1.5 rounded-full border border-white/20 hover:bg-white/10">Copiar página ${i+1}</button></div>`)}</div>`
+          :html`<div class="sk h-64 w-full"></div>`}
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <${motion.button} ...${tactile} type="button" id="shareGuiada" disabled=${!blobs} onClick=${()=>shareBlobs(blobs,base,text,setMsg,0,true)} class="inline-flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-full" style=${{background:"#25d366",color:"#062b16"}}>${WA_ICON}Compartilhar no WhatsApp</${motion.button}>
+        <${motion.button} ...${tactile} type="button" id="copyGuiada" onClick=${copyText} class="text-sm font-medium px-4 py-2 rounded-full border border-white/20">Copiar texto</${motion.button}>
+        <${motion.button} ...${tactile} type="button" onClick=${dlAll} disabled=${!blobs} class="text-sm font-medium px-4 py-2 rounded-full border border-white/20">Baixar ${blobs&&blobs.length>1?"páginas":"PNG"}</${motion.button}>
+        <${motion.button} ...${tactile} type="button" id="pdfGuiada" onClick=${pdfAll} disabled=${!blobs} class="text-sm font-medium px-4 py-2 rounded-full border border-white/20">Baixar PDF (todas)</${motion.button}>
+        <span class="text-xs" style=${{color:msg?"var(--accent)":"var(--muted)"}}>${msg||"Cada rua começa numa página nova."}</span>
+      </div>
+    </${motion.div}>
+  </${motion.div}>`;
+}
+
+function BuildBar({cur,onZeroPlan,hasPlan,onApplyRead,onDistribute,goLayout,onGuiada}){
+  const [zeroAsk,setZeroAsk]=useState(false);const [reading,setReading]=useState(false);const [msg,setMsg]=useState("");
+  useEffect(()=>{if(!msg)return;const t=setTimeout(()=>setMsg(""),4500);return()=>clearTimeout(t)},[msg]);
+  return html`<${motion.section} variants=${rise} class="col-span-2 md:col-span-12 rounded-3xl p-4 sm:p-5 flex flex-col gap-3" style=${{background:"rgba(76,195,255,.06)",border:"1px solid rgba(76,195,255,.2)"}}>
+    <div class="flex flex-wrap items-center gap-2">
+      <div class="mr-2"><div class="text-[11px] uppercase tracking-[.16em] text-muted font-semibold">Montar layout ${cur}</div>
+        <div class="text-xs text-muted mt-0.5">Zere o planejamento antigo, importe o do ciclo, leia o desenho do layout e organize as rotas nas vagas.</div></div>
+      <div class="flex flex-wrap items-center gap-2 ml-auto">
+        <${motion.button} ...${tactile} type="button" id="zeroBtn" disabled=${!hasPlan} onClick=${()=>{if(zeroAsk){onZeroPlan();setZeroAsk(false);setMsg("Planejamento zerado. Importe ou cole o do próximo ciclo.")}else{setZeroAsk(true);setTimeout(()=>setZeroAsk(false),4000)}}}
+          class=${"text-sm font-semibold px-4 py-2 rounded-full border "+(hasPlan?"":"opacity-40")} style=${zeroAsk?{background:"#e5262a",color:"#fff",borderColor:"#e5262a"}:{borderColor:"rgba(229,38,42,.6)",color:"#ff8a8c"}}>${zeroAsk?"Toque de novo para zerar":"1 · Zerar planejamento"}</${motion.button}>
+        <${motion.button} ...${tactile} type="button" id="readOpen" onClick=${()=>setReading(true)} class="text-sm font-semibold px-4 py-2 rounded-full" style=${{background:"var(--accent)",color:"#04121b"}}>2 · Ler desenho</${motion.button}>
+        <${motion.button} ...${tactile} type="button" id="distBtn" onClick=${()=>{const r=onDistribute();setMsg(r.placed?`${r.placed} rotas colocadas nas vagas do layout ${cur}`+(r.left?` · ${r.left} ficaram sem vaga livre`:""):"Nenhuma rota nova para colocar.")}} class="text-sm font-medium px-4 py-2 rounded-full border border-white/25">3 · Organizar rotas</${motion.button}>
+        <${motion.button} ...${tactile} type="button" id="guiadaBtn" disabled=${!hasPlan} onClick=${onGuiada} class=${"text-sm font-semibold px-4 py-2 rounded-full inline-flex items-center gap-1.5 "+(hasPlan?"":"opacity-40")} style=${{background:"#25d366",color:"#062b16"}}>${WA_ICON}4 · Guiada</${motion.button}>
+        <${motion.button} ...${tactile} type="button" onClick=${goLayout} class="text-sm font-medium px-4 py-2 rounded-full border border-white/25">Ver layout ›</${motion.button}>
+      </div>
+    </div>
+    ${msg&&html`<div class="text-sm rounded-xl px-3 py-2" style=${{background:"rgba(76,195,255,.1)",color:"var(--accent)"}}>${msg}</div>`}
+    ${ReactDOM.createPortal(html`<${AnimatePresence}>${reading&&html`<${ReadModal} key="read" cur=${cur} onClose=${()=>setReading(false)} onApply=${(t,r,d)=>{const n=onApplyRead(t,r,d);setReading(false);setMsg(`Layout ${t} montado pelo desenho: ${n.vagas} vagas`+(n.placed?` · ${n.placed} rotas organizadas`:""));setTimeout(goLayout,700)}}/>`}</${AnimatePresence}>`,document.body)}
+  </${motion.section}>`;
+}
+function PlanView({cur,L,setCur,onZero,onApplyRead,onDistribute,goLayout}){
+  const [src,setSrc]=useState(()=>{try{const s=JSON.parse(localStorage.getItem("svc-plan2")||"null");if(s&&s.rows)return s;if(s&&s.empty)return null}catch(e){}return parseDefault()});
+  const zeroPlan=()=>{try{localStorage.setItem("svc-plan2",JSON.stringify({empty:true}))}catch(e){}setSrc(null);setErr("")};
+  const [ruaSel,setRuaSel]=useState(0);const [paste,setPaste]=useState(false);const [err,setErr]=useState("");const [drag,setDrag]=useState(false);const [busy,setBusy]=useState(false);const [guiada,setGuiada]=useState(false);
+  const rows=src?src.rows:[];const headers=src?src.headers:[];const m=src?src.map:{};
+  const ciclo=src?detectCiclo(src.title||"",rows,m):null;
+  CICLO_TAG=src?cicloTag(rows,m):"";
+  const save=obj=>{setSrc(obj);try{localStorage.setItem("svc-plan2",JSON.stringify(obj))}catch(e){}};
+  const load=(aoa,name)=>{const t=fromAOA(aoa);if(!t.rows.length){setErr("Não encontrei linhas nessa planilha.");return}
+    const gm=guessMap(t.headers);setErr((gm.rota||gm.gaiola)&&gm.transp?"":"Não achei sozinho as colunas de rota/gaiola e transportadora. Escolha abaixo quais são.");
+    const obj={...t,name,at:new Date().toLocaleString("pt-BR"),map:gm};save(obj);setRuaSel(0)};
+  const withSteps=fn=>{setErr("");setPaste(false);setBusy(true);setTimeout(()=>{try{fn()}finally{setBusy(false)}},850)};
+  useEffect(()=>{if(ciclo&&ciclo!==cur)setCur(ciclo)},[src]);
+  const onFile=f=>{if(!f)return;const isTxt=/\.(csv|txt)$/i.test(f.name);const rd=new FileReader();
+    rd.onload=e=>withSteps(()=>{try{const wb=isTxt?XLSX.read(e.target.result,{type:"string",raw:true}):XLSX.read(e.target.result,{type:"array"});
+      let best=null;wb.SheetNames.forEach(n=>{const aoa=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:false,defval:""});const t=fromAOA(aoa);const g=guessMap(t.headers);
+        const sc=(g.rota?2:0)+(g.gaiola?2:0)+(g.onda?1:0)+t.rows.length/1e6;if(!best||sc>best.sc)best={aoa,sc}});
+      load(best?best.aoa:[],f.name)}catch(x){setErr("Não consegui ler esse arquivo. Use .xlsx, .xls ou .csv.")}});
+    isTxt?rd.readAsText(f,"utf-8"):rd.readAsArrayBuffer(f)};
+  const onPaste=t=>{const lines=t.replace(/\r/g,"").split("\n").filter(l=>l.trim());if(lines.length<2){setErr("Cole o cabeçalho e pelo menos uma linha.");return}
+    const sep=lines.some(l=>l.includes("\t"))?"\t":lines[1].includes(";")?";":",";withSteps(()=>load(lines.map(l=>l.split(sep)),"Planejamento colado"))};
+  const reset=()=>{try{localStorage.removeItem("svc-plan2")}catch(e){}setErr("");setSrc(parseDefault())};
+
+  const routes=useMemo(()=>src&&(m.rota||m.gaiola)&&m.transp?aggregate(rows,m):[],[src]);
+  const ondas=m.onda?[...new Set([1,2,3,4,...routes.map(r=>r.onda).filter(x=>x!=null)])].sort((a,b)=>a-b):[];
+  if(!m.onda||routes.some(r=>r.onda==null))ondas.push("?");
+  const byRua={1:{},2:{},3:{},4:{},5:{}};const semRua={};
+  const vagaOf={};Object.entries(L.tags||{}).forEach(([v,t])=>{if(!t||L.map[v]==="V")return;const a=normTxt(t),b=normTxt(shortTag(t));if(!vagaOf[a])vagaOf[a]=+v;if(!vagaOf[b])vagaOf[b]=+v});
+  const placed=routes.map(r0=>{const vv=vagaOf[normTxt(r0.gaiola)]||vagaOf[normTxt(r0.rota)];return vv?{...r0,vaga:vv,ruasFix:[rua(vv)]}:r0});
+  placed.forEach(r=>{const rs=r.ruasFix||(r.k?carrierRuas(L,r.k):[]);const g=r.k||normTxt(r.transpRaw)||"SEM TRANSPORTADORA";
+    if(!rs.length){(semRua[g]=semRua[g]||[]).push(r);return}
+    rs.forEach(n=>{if(byRua[n])(byRua[n][g]=byRua[n][g]||[]).push(r)})});
+  const ruaCount=n=>Object.values(byRua[n]).reduce((a,l)=>a+l.length,0);
+  const vagasTxt=(n,k)=>ranges(Object.keys(L.map).map(Number).filter(v=>rua(v)===n&&L.map[v]===k).sort((a,b)=>a-b));
+  const ruasToShow=ruaSel?[ruaSel]:[1,2,3,4,5];
+  const totalSacas=routes.reduce((a,r)=>a+r.children.length,0);
+
+  const statTile=(label,v,sub,extra,color)=>html`<${motion.section} variants=${rise} class="glass rounded-2xl px-4 py-3 col-span-1 md:col-span-3 min-w-0 relative overflow-hidden" whileHover=${{y:-2}}>
+      <div class="absolute -right-8 -top-8 w-24 h-24 rounded-full pointer-events-none" style=${{background:color,filter:"blur(40px)",opacity:.14}}></div>
+      <div class="flex items-baseline justify-between gap-2"><div class="text-[10px] uppercase tracking-[.14em] text-muted font-semibold">${label}</div><div class="font-display tnum leading-none tracking-tight text-xl" style=${{color}}><${CountUp} v=${v}/></div></div>
+      ${sub&&html`<div class="text-muted text-[11px] mt-1">${sub}</div>`}
+      ${extra}
+    </${motion.section}>`;
+  const totalPar=routes.reduce((a,r)=>a+(typeof r.parada==="number"?r.parada:0),0);
+  const maes=routes.filter(r=>r.children.length).length;
+  const carriersIn=[...new Set(routes.map(r=>r.k).filter(Boolean))];
+  const porOnda=ondas.map(o=>[o,routes.filter(r=>(r.onda??"?")===o).length]);const maxO=Math.max(1,...porOnda.map(x=>x[1]));
+  const cleanName=src?String(src.name).replace(/\.(csv|xlsx?|txt)$/i,"").replace(/\s*-\s*P[áa]gina\d*$/i,""):"";
+  const chip=(t,tone)=>html`<span class=${"inline-flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-full"} style=${tone==="ok"?{background:"rgba(52,211,153,.12)",color:"#5ee6b0"}:tone==="warn"?{background:"rgba(255,181,71,.12)",color:"var(--amber)"}:{background:"rgba(255,255,255,.06)",color:"var(--muted)"}}>${tone==="ok"&&html`<svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M2 6.5l2.5 2.5L10 3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`}${t}</span>`;
+  const STEPS=["Lendo o arquivo","Achando o cabeçalho","Identificando o ciclo","Montando as ruas"];
+  return html`<${motion.div} key="plan" variants=${stagger} initial="hidden" animate="show" class="grid grid-cols-2 md:grid-cols-12 gap-4">
+    <${Card} className="col-span-2 md:col-span-7" title="Planejamento carregado">
+      <div class="font-display tracking-tight leading-tight text-lg sm:text-xl" style=${{textWrap:"balance"}}>${cleanName||"Nenhum planejamento carregado"}</div>
+      <div class="flex flex-wrap gap-1.5 mt-2.5">
+        ${ciclo&&chip("Ciclo "+ciclo+(CICLO_TAG?" · "+CICLO_TAG:""),"")}
+        ${ciclo&&(ciclo===cur?chip("Layout "+cur+" aplicado","ok"):chip("Layout aberto: "+cur,"warn"))}
+        ${src&&(src.noHeader?chip("Sem cabeçalho · colunas reconhecidas pelo conteúdo","ok"):src.headerRow&&chip("Cabeçalho na linha "+src.headerRow,"ok"))}
+        ${src&&chip((src.isDefault?"Enviado em ":"Importado em ")+src.at,"")}
+      </div>
+      ${ciclo&&ciclo!==cur&&html`<div class="mt-3 flex flex-wrap items-center gap-2 text-sm rounded-2xl px-3 py-2" style=${{background:"rgba(255,181,71,.1)",color:"var(--amber)"}}>
+        Este planejamento é do ciclo ${ciclo}.
+        <${motion.button} ...${tactile} type="button" onClick=${()=>setCur(ciclo)} class="font-semibold underline underline-offset-2">Voltar para o layout ${ciclo}</${motion.button}></div>`}
+      ${src&&html`<div class="mt-3 pt-3 border-t border-line">
+        <div class="text-[10px] uppercase tracking-[.14em] text-muted font-semibold mb-1.5">Colunas reconhecidas</div>
+        <div class="flex flex-wrap gap-1.5">${FIELDS.filter(f=>m[f.id]).map(f=>html`<span key=${f.id} class="text-[11px] px-2 py-1 rounded-lg bg-white/[.05]"><span class="text-muted">${f.label}</span> <span class="font-mono">← ${m[f.id]}</span></span>`)}</div>
+      </div>`}
+    </${Card}>
+
+    <${motion.section} variants=${rise} class="col-span-2 md:col-span-5 min-w-0 rounded-3xl p-[1.5px] relative overflow-hidden"
+        onDragOver=${e=>{e.preventDefault();setDrag(true)}} onDragLeave=${()=>setDrag(false)} onDrop=${e=>{e.preventDefault();setDrag(false);onFile(e.dataTransfer.files[0])}}>
+      <div class="absolute inset-[-60%] spin pointer-events-none" style=${{background:"conic-gradient(from 0deg,transparent 0 55%,rgba(76,195,255,.9) 70%,rgba(255,181,71,.8) 82%,transparent 95%)",opacity:drag||busy?1:.55}}></div>
+      <div class="relative h-full rounded-[calc(1.5rem-1.5px)] p-4 flex flex-col" style=${{background:"rgba(12,16,21,.94)"}}>
+        <div class="text-[11px] uppercase tracking-[.16em] text-muted font-semibold">Importar planejamento</div>
+        <${AnimatePresence} mode="wait">
+        ${busy?html`<${motion.div} key="busy" initial=${{opacity:0}} animate=${{opacity:1}} exit=${{opacity:0}} class="flex-1 flex flex-col justify-center gap-1.5 py-2">
+            ${STEPS.map((t,i)=>html`<${motion.div} key=${t} initial=${{opacity:0,x:-8}} animate=${{opacity:1,x:0}} transition=${{delay:i*.16}} class="flex items-center gap-3 text-sm">
+              <${motion.span} initial=${{scale:0}} animate=${{scale:1}} transition=${{delay:i*.16+.12,type:"spring",stiffness:500,damping:20}} class="w-5 h-5 rounded-full flex items-center justify-center" style=${{background:"var(--accent)",color:"#04121b"}}>
+                <svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2 6.5l2.5 2.5L10 3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></${motion.span}>${t}</${motion.div}>`)}
+          </${motion.div}>`
+        :html`<${motion.div} key="idle" initial=${{opacity:0}} animate=${{opacity:1}} exit=${{opacity:0}} class="flex-1 flex flex-col justify-center py-1">
+            <div class="flex items-center gap-3">
+            <${motion.div} animate=${{y:drag?-6:[0,-4,0]}} transition=${drag?{}:{repeat:Infinity,duration:2.4,ease:"easeInOut"}} class="w-10 h-10 shrink-0 rounded-xl flex items-center justify-center" style=${{background:"linear-gradient(145deg,rgba(76,195,255,.22),rgba(76,195,255,.04))",boxShadow:"inset 0 0 0 1px rgba(76,195,255,.35)"}}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 16V4m0 0l-4.5 4.5M12 4l4.5 4.5" stroke="#4cc3ff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3" stroke="#4cc3ff" stroke-width="1.8" stroke-linecap="round"/></svg>
+            </${motion.div}>
+            <div class="min-w-0 text-left"><div class="font-display text-sm tracking-tight">${drag?"Pode soltar":"Solte o planejamento aqui"}</div>
+            <p class="text-muted text-[11px] mt-0.5">.xlsx, .xls ou .csv · abre o layout certo sozinho</p></div></div>
+            <div class="flex flex-wrap items-center gap-2 mt-3">
+              <${motion.label} ...${tactile} for="planFile" class="cursor-pointer text-xs font-semibold px-4 py-2 rounded-full bg-white text-black">Escolher arquivo</${motion.label}>
+              <input id="planFile" type="file" accept=".xlsx,.xls,.csv,.txt" class="sr-only" onChange=${e=>{onFile(e.target.files[0]);e.target.value=""}}/>
+              <${motion.button} ...${tactile} type="button" onClick=${()=>setPaste(!paste)} class="text-xs font-medium px-4 py-2 rounded-full border border-white/20">Colar do Excel</${motion.button}>
+            ${src&&!src.isDefault&&html`<${motion.button} ...${tactile} type="button" onClick=${reset} class="text-xs text-muted hover:text-ink ml-1">Voltar ao AM1 de 28/09</${motion.button}>`}
+            </div>
+          </${motion.div}>`}
+        </${AnimatePresence}>
+        <${AnimatePresence}>${paste&&!busy&&html`<${motion.div} initial=${{opacity:0,height:0}} animate=${{opacity:1,height:"auto"}} exit=${{opacity:0,height:0}} class="overflow-hidden">
+          <label for="pasteBox" class="block text-muted text-xs mb-2">Copie no Excel (com o cabeçalho) e cole aqui:</label>
+          <textarea id="pasteBox" rows="3" class="w-full bg-white/5 border border-line rounded-2xl p-3 font-mono text-xs outline-none focus:border-[var(--accent)]" onPaste=${e=>{e.preventDefault();onPaste(e.clipboardData.getData("text"))}}></textarea>
+        </${motion.div}>`}</${AnimatePresence}>
+        ${err&&html`<p class="text-sm mt-2" style=${{color:"#ff8a8c"}}>${err}</p>`}
+      </div>
+    </${motion.section}>
+
+    ${ReactDOM.createPortal(html`<${AnimatePresence}>${guiada&&html`<${GuiadaModal} key="g" cur=${cur} ciclo=${(CICLO_TAG||ciclo||cur)} items=${autoPlace(placed.map(r=>({...r,name:r.k&&CARRIERS[r.k]?CARRIERS[r.k].n:(r.transpRaw||"?"),rua:r.vaga?rua(r.vaga):null})),L)} onClose=${()=>setGuiada(false)}/>`}</${AnimatePresence}>`,document.body)}
+    <${BuildBar} cur=${cur} onZeroPlan=${zeroPlan} hasPlan=${!!src} onGuiada=${()=>setGuiada(true)} onApplyRead=${onApplyRead} onDistribute=${onDistribute} goLayout=${goLayout}/>
+    ${statTile("Rotas",routes.length,m.onda?"":"planilha sem onda",!m.onda?null:html`<div class="flex items-end gap-1 h-7 mt-1.5">${porOnda.map(([o,n])=>html`<div key=${o} class="flex-1 flex flex-col items-center gap-1 min-w-0" title=${(o==="?"?"Sem onda":"Onda "+o)+": "+n}>
+        <${motion.div} class="w-full rounded-md" style=${{background:"var(--accent)",opacity:.8}} initial=${{height:0}} animate=${{height:Math.max(2,n/maxO*14)}} transition=${{duration:.8,ease:[.22,1,.36,1]}}/>
+        <span class="text-[9px] text-muted tnum">${o==="?"?"s/o":"O"+o} · ${n}</span></div>`)}</div>`,"var(--ink)")}
+    ${statTile("Paradas",totalPar,!m.parada?"planilha sem paradas":routes.length?"média de "+Math.round(totalPar/routes.length)+" por rota":"",null,"var(--accent)")}
+    ${statTile("Sacas",totalSacas,maes?plural(maes,"rota mãe","rotas mãe"):"nenhuma rota mãe",null,"var(--amber)")}
+    ${statTile("Transportadoras",carriersIn.length,"",html`<div class="flex flex-wrap gap-1 mt-1.5">${carriersIn.map(k=>html`<${Swatch} key=${k} k=${k}/>`)}</div>`,"#5ee6b0")}
+
+    ${src&&html`<${motion.details} variants=${rise} class="col-span-2 md:col-span-12 glass rounded-2xl px-4 py-3 text-sm">
+      <summary class="cursor-pointer text-muted text-xs">Colunas usadas da planilha (mude se alguma estiver errada)</summary>
+      <div class="mt-3 grid grid-cols-2 sm:grid-cols-5 lg:grid-cols-10 gap-2">
+        ${FIELDS.map(f=>html`<label key=${f.id} class="text-[11px] text-muted flex flex-col gap-1 min-w-0"><span>${f.label}</span>
+          <select id=${"map-"+f.id} value=${m[f.id]||""} onChange=${e=>save({...src,map:{...m,[f.id]:e.target.value||undefined}})} class="bg-white/5 border border-line rounded-lg px-2 py-1.5 text-xs text-ink">
+            <option value="">— não tem —</option>${headers.map(h=>html`<option key=${h} value=${h}>${h}</option>`)}
+          </select></label>`)}
+      </div></${motion.details}>`}
+
+    <${motion.div} variants=${rise} class="col-span-2 md:col-span-12 flex gap-2 overflow-x-auto noscroll">
+      ${[0,1,2,3,4,5].map(n=>html`<${motion.button} key=${n} id=${"rua-"+n} ...${tactile} type="button" onClick=${()=>setRuaSel(n)}
+        class=${"shrink-0 glass rounded-2xl px-4 py-2.5 text-left "+(ruaSel===n?"!border-[var(--accent)]":"")}>
+        <div class="font-display text-sm">${n?"Rua "+n:"Todas"}</div>
+        <div class="text-muted text-[11px] tnum">${plural(n?ruaCount(n):routes.length,"rota","rotas")}</div></${motion.button}>`)}
+    </${motion.div}>
+
+    ${ruasToShow.map(n=>{const ks=Object.keys(byRua[n]).sort((a,b)=>(CARRIERS[a]?.n||a).localeCompare(CARRIERS[b]?.n||b));
+      return html`<${Card} key=${"rua"+n+cur} className="col-span-2 md:col-span-12" title=${"Rua "+n+" · "+RUA_NOME[n]}
+        right=${html`<span class="text-muted text-xs tnum">${plural(ruaCount(n),"rota","rotas")} · ${plural(ks.length,"transportadora","transportadoras")}</span>`}>
+        ${ks.length?html`<div class="flex flex-col gap-3">${ks.map(k=>{const other=CARRIERS[k]?carrierRuas(L,k).filter(x=>x!==n):[];const fixed=byRua[n][k].every(r=>r.ruasFix);
+            return html`<${CarrierBlock} key=${k} gkey=${k} list=${byRua[n][k]} ondas=${ondas} vagas=${CARRIERS[k]?vagasTxt(n,k):""} note=${!fixed&&other.length?"também na Rua "+other.join(", "):""}/>`})}</div>`
+          :html`<p class="text-muted text-sm">Nenhuma rota do planejamento cai nesta rua no layout ${cur}.</p>`}
+      </${Card}>`})}
+
+    ${!ruaSel&&Object.keys(semRua).length>0&&html`<${Card} className="col-span-2 md:col-span-12" title="Fora das ruas deste layout">
+      <p class="text-muted text-sm mb-3 max-w-[70ch]">Rotas de transportadoras sem vaga no layout ${cur} (ex.: PRALOG) e as marcadas como ESVAZIAR.</p>
+      <div class="flex flex-col gap-3">${Object.keys(semRua).sort().map(k=>html`<${CarrierBlock} key=${k} gkey=${k} list=${semRua[k]} ondas=${ondas}/>`)}</div>
+    </${Card}>`}
+  </${motion.div}>`;
+}
+
+function App(){
+  let init="AM0-CHP";try{const s=localStorage.getItem("svc-tab");if(s&&LAYOUTS[s])init=s}catch(e){}
+  const [cur,setCurRaw]=useState(init);const [filter,setFilter]=useState(null);const [sel,setSel]=useState(null);const [loading,setLoading]=useState(true);
+  const [view,setViewRaw]=useState(()=>{try{return localStorage.getItem("svc-view")||"planta"}catch(e){return "planta"}});
+  const setView=v=>{setViewRaw(v);try{localStorage.setItem("svc-view",v)}catch(e){}};
+  useEffect(()=>{const t=setTimeout(()=>setLoading(false),650);return()=>clearTimeout(t)},[]);
+  const setCur=k=>{if(k===cur)return;setCurRaw(k);setFilter(null);setSel(null);try{localStorage.setItem("svc-tab",k)}catch(e){}};
+  const [edits,setEdits]=useState(()=>{try{return JSON.parse(localStorage.getItem("svc-edits")||"{}")}catch(e){return {}}});
+  const [hist,setHist]=useState({});
+  const [geos,setGeos]=useState(()=>{try{return JSON.parse(localStorage.getItem("svc-geo9")||"{}")}catch(e){return {}}});
+  const [tagOv,setTagOv]=useState(()=>{try{return JSON.parse(localStorage.getItem("svc-tags")||"{}")}catch(e){return {}}});
+  const storeTags=o=>{setTagOv(o);try{localStorage.setItem("svc-tags",JSON.stringify(o))}catch(e){}};
+  const onTag=(v,t)=>{const cur2={...(tagOv[cur]||{}),[v]:t};storeTags({...tagOv,[cur]:cur2})};
+  const storeGeos=o=>{setGeos(o);try{localStorage.setItem("svc-geo9",JSON.stringify(o))}catch(e){}};
+  const storeEdits=o=>{setEdits(o);try{localStorage.setItem("svc-edits",JSON.stringify(o))}catch(e){}};
+  const L=useMemo(()=>({...LAYOUTS[cur],map:edits[cur]||LAYOUTS[cur].map,geo:mergeGeo(geos[cur]),tags:(()=>{const t={...LAYOUTS[cur].tags};Object.entries(tagOv[cur]||{}).forEach(([v,x])=>{if(x)t[v]=x;else delete t[v]});return t})()}),[cur,edits,geos,tagOv]);
+  const snap=()=>({map:L.map,geo:geos[cur]||null,tags:tagOv[cur]||null});
+  const pushHist=()=>setHist(h=>({...h,[cur]:[...(h[cur]||[]),snap()].slice(-60)}));
+  const onGeo=patch=>{pushHist();const g=geos[cur]||{};const ng={...g};["slots","blocks","tags","caps"].forEach(k=>{if(patch[k])ng[k]={...(g[k]||{}),...patch[k]}});storeGeos({...geos,[cur]:ng})};
+  const onEdit=nm=>{pushHist();storeEdits({...edits,[cur]:nm})};
+  const onUndo=()=>{const st=hist[cur]||[];if(!st.length)return;const prev=st[st.length-1];setHist({...hist,[cur]:st.slice(0,-1)});
+    const ne={...edits};if(JSON.stringify(prev.map)===JSON.stringify(LAYOUTS[cur].map))delete ne[cur];else ne[cur]=prev.map;storeEdits(ne);
+    const ng={...geos};if(prev.geo)ng[cur]=prev.geo;else delete ng[cur];storeGeos(ng);
+    const nt={...tagOv};if(prev.tags)nt[cur]=prev.tags;else delete nt[cur];storeTags(nt)};
+  const allV=()=>{const m={};for(let v=1;v<=97;v++)m[v]="V";return m};
+  const onZero=()=>{pushHist();storeEdits({...edits,[cur]:allV()});storeTags({...tagOv,[cur]:{}})};
+  const onDistribute=()=>{pushHist();const r=distributeRoutes(L.map,L.tags);storeTags({...tagOv,[cur]:r.tags});return r};
+  const onApplyRead=(t,res,dist)=>{pushHist();const m=allV();Object.entries(res.vagas).forEach(([v,k])=>m[v]=k);let tags={...res.gaiolas},placed=0;
+    if(dist){const r=distributeRoutes(m,tags);tags=r.tags;placed=r.placed}
+    storeEdits({...edits,[t]:m});storeTags({...tagOv,[t]:tags});if(t!==cur)setCur(t);return {vagas:Object.keys(res.vagas).length,placed}};
+  const onReset=()=>{pushHist();const nt={...tagOv};delete nt[cur];storeTags(nt);const ne={...edits};delete ne[cur];storeEdits(ne);const ng={...geos};delete ng[cur];storeGeos(ng)};
+  const pick=v=>{setSel(v);setFilter(null)};
+  const pickFilter=k=>{setFilter(k);setSel(null)};
+  return html`<div>
+    <${Nav} cur=${cur} setCur=${setCur} view=${view} setView=${setView}/>
+    <main class="max-w-7xl mx-auto px-4 pt-32 pb-16">
+      <${AnimatePresence} mode="wait">
+        ${loading?html`<${motion.div} key="sk" exit=${{opacity:0}}><${Skeleton}/></${motion.div}>`
+        :view==="plan"?html`<${PlanView} key="plan" cur=${cur} L=${L} setCur=${setCur} onZero=${onZero} onApplyRead=${onApplyRead} onDistribute=${onDistribute} goLayout=${()=>{setView("planta");window.scrollTo({top:0,behavior:"smooth"})}}/>`
+        :html`<${motion.div} key="ok" variants=${stagger} initial="hidden" animate="show" class="grid grid-cols-1 md:grid-cols-12 gap-4">
+            <${Hero} cur=${cur} L=${L}/>
+            <${Search} L=${L} onPick=${pick}/>
+            <${Plant} cur=${cur} L=${L} filter=${filter} sel=${sel} onPick=${pick} onEdit=${onEdit} onGeo=${onGeo} onTag=${onTag} onZero=${onZero} onApplyRead=${onApplyRead} onDistribute=${onDistribute} onUndo=${onUndo} onReset=${onReset} canUndo=${(hist[cur]||[]).length>0} edited=${!!edits[cur]||!!geos[cur]||!!(tagOv[cur]&&Object.keys(tagOv[cur]).length)}/>
+            <${Carriers} L=${L} filter=${filter} setFilter=${pickFilter}/>
+            <${Detail} L=${L} filter=${filter} sel=${sel}/>
+            <${Table} cur=${cur} L=${L}/>
+          </${motion.div}>`}
+      </${AnimatePresence}>
+    </main>
+  </div>`;
+}
+ReactDOM.createRoot(document.getElementById("root")).render(html`<${App}/>`);
+</script>
+</html>
