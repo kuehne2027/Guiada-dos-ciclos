@@ -345,6 +345,85 @@ function distributeRoutes(map,tags){
   return {tags:res,placed,left};
 }
 
+/* ============ LEITURA LOCAL (grátis, sem IA) ============ */
+const LR_EXP={1:16,2:17,3:31,4:9,5:23};
+const LR_NUMS={1:[...Array(16)].map((_,i)=>1+2*i),2:[...Array(17)].map((_,i)=>2+2*i),3:[...Array(31)].map((_,i)=>35+i),4:[...Array(9)].map((_,i)=>89+i),5:[...Array(23)].map((_,i)=>88-i)};
+const LR_CLICKS=[[1,1,"vaga 1 (Rua 1, a primeira de cima)"],[1,31,"vaga 31 (Rua 1, a última de baixo)"],[2,2,"vaga 2 (Rua 2, a primeira de cima)"],[2,34,"vaga 34 (Rua 2, a última de baixo)"],
+  [3,35,"vaga 35 (Rua 3, a primeira da esquerda)"],[3,65,"vaga 65 (Rua 3, a última da direita)"],[5,88,"vaga 88 (Rua 5, a primeira da esquerda)"],[5,66,"vaga 66 (Rua 5, a última da direita)"],
+  [4,89,"vaga 89 (Rua 4, a primeira de cima)"],[4,97,"vaga 97 (Rua 4, a última de baixo)"]];
+const LR_PAL={X:[[255,0,0],[237,28,36],[230,40,40]],HW:[[0,32,96],[31,56,100],[0,51,102],[22,53,122]],OT:[[255,255,0],[255,242,0]],DC:[[0,255,255],[0,204,255],[0,176,240],[34,230,234]],
+  CM:[[0,255,0],[146,208,80],[0,176,80],[34,224,36]],DL:[[84,130,53],[56,87,35],[112,173,71],[79,122,46]],KG:[[255,153,0],[255,192,0],[237,125,49],[243,146,0]],MS:[[128,128,128],[166,166,166],[118,118,118],[138,138,138]],
+  EC:[[255,242,204],[252,228,214],[255,230,153],[246,226,192]],ME:[[248,203,173],[244,176,132],[244,199,173]],PY:[[191,143,0],[184,134,11]],PL:[[112,48,160],[123,94,167]],PC:[[255,255,255],[242,242,242]]};
+function lrImageData(img){const c=document.createElement("canvas");c.width=img.naturalWidth;c.height=img.naturalHeight;const g=c.getContext("2d");g.drawImage(img,0,0);return g.getImageData(0,0,c.width,c.height)}
+function lrPx(D,x,y){x=Math.round(x);y=Math.round(y);if(x<0||y<0||x>=D.width||y>=D.height)return null;const i=(y*D.width+x)*4;return [D.data[i],D.data[i+1],D.data[i+2]]}
+const lrDark=p=>{const mx=Math.max(...p),mn=Math.min(...p);return mx<110&&mx-mn<70};
+function lrSeps(D,a,u,pp,d,s0,s1){const out=[];let st=-1;const ts=[];for(let t=s0;t<s1;t+=0.5)ts.push(t);
+  const prof=ts.map(t=>{const p=lrPx(D,a[0]+u[0]*t+pp[0]*d,a[1]+u[1]*t+pp[1]*d);return p?lrDark(p):false});
+  for(let i=0;i<=prof.length;i++){const v=i<prof.length&&prof[i];if(v&&st<0)st=i;if(!v&&st>=0){if((i-st)*0.5<=4)out.push(ts[Math.floor((st+i-1)/2)]);st=-1}}
+  return out}
+function lrCenters(D,a,b,n){const dx=b[0]-a[0],dy=b[1]-a[1],L=Math.hypot(dx,dy)||1,u=[dx/L,dy/L],pp=[-u[1],u[0]],pitch=L/(n-1);
+  const toCells=sp=>{let c=[];for(let i=0;i+1<sp.length;i++)if(sp[i+1]-sp[i]>=pitch*0.35)c.push([sp[i],sp[i+1]]);return c.filter(x=>{const m=(x[0]+x[1])/2;return m>=-pitch*0.5&&m<=L+pitch*0.5})};
+  const aligned=cs=>Math.abs(cs[0])+Math.abs(cs[cs.length-1]-L)<pitch*0.9;
+  const fit=cells=>{cells=cells.map(c=>[...c]);let guard=0;
+    while(cells.length<n&&guard++<40){let wi=0;cells.forEach((c,i)=>{if(c[1]-c[0]>cells[wi][1]-cells[wi][0])wi=i});const c=cells[wi],m=(c[0]+c[1])/2;cells.splice(wi,1,[c[0],m],[m,c[1]])}
+    while(cells.length>n&&guard++<80){let ni=0;cells.forEach((c,i)=>{if(c[1]-c[0]<cells[ni][1]-cells[ni][0])ni=i});const j=ni+1<cells.length?ni+1:ni-1;const lo=Math.min(ni,j);cells.splice(lo,2,[cells[lo][0],cells[lo+1][1]])}
+    return cells};
+  const ds=[0];for(let i=1;i<=60;i++){ds.push(i,-i)}
+  const cand=[];
+  for(const d of ds){const sp=lrSeps(D,a,u,pp,d,-pitch*0.8,L+pitch*0.8);const cells=toCells(sp);
+    if(cells.length===n){const cs=cells.map(c=>(c[0]+c[1])/2);if(aligned(cs))return {pts:cs.map(t=>[a[0]+u[0]*t,a[1]+u[1]*t]),pitch,how:"sep"}}
+    if(Math.abs(cells.length-n)<=3)cand.push({d,sp,cells})}
+  if(cand.length){cand.sort((x,y)=>Math.abs(x.cells.length-n)-Math.abs(y.cells.length-n)||Math.abs(x.d)-Math.abs(y.d));const bd=cand[0].d;
+    let all=[];cand.filter(c=>Math.abs(c.d-bd)<=5).forEach(c=>all.push(...c.sp));all.sort((x,y)=>x-y);const merged=[];all.forEach(t=>{if(merged.length&&t-merged[merged.length-1]<2.5)return;merged.push(t)});
+    const cells=fit(toCells(merged));if(cells.length===n){const cs=cells.map(c=>(c[0]+c[1])/2);if(aligned(cs))return {pts:cs.map(t=>[a[0]+u[0]*t,a[1]+u[1]*t]),pitch,how:"fit"}}}
+  return {pts:[...Array(n)].map((_,i)=>[a[0]+u[0]*i*pitch,a[1]+u[1]*i*pitch]),pitch,how:"lin"}}
+function lrClassify(D,c,r){const cnt={},sum={};let dark=0,tot=0;
+  for(let y=-r;y<=r;y++)for(let x=-r;x<=r;x++){const p=lrPx(D,c[0]+x,c[1]+y);if(!p)continue;tot++;const mx=Math.max(...p),mn=Math.min(...p);if(mx<95&&mx-mn<60){dark++;continue}
+    const k=(p[0]/24|0)+"_"+(p[1]/24|0)+"_"+(p[2]/24|0);cnt[k]=(cnt[k]||0)+1;const s=sum[k]||(sum[k]=[0,0,0]);s[0]+=p[0];s[1]+=p[1];s[2]+=p[2]}
+  if(!tot)return {k:"V",d:999};if(dark/tot>0.6)return {k:"AL",d:0};
+  const top=Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a])[0];if(!top)return {k:"AL",d:0};const s=sum[top],n=cnt[top],col=[s[0]/n,s[1]/n,s[2]/n];
+  let best="V",bd=1e9;Object.entries(LR_PAL).forEach(([k,cs])=>cs.forEach(cc=>{const d=Math.hypot(cc[0]-col[0],cc[1]-col[1],cc[2]-col[2]);if(d<bd){bd=d;best=k}}));return {k:best,d:bd,col}}
+function lrFrame(D){const W=D.width,H=D.height;const rowC=new Array(H).fill(0),colC=new Array(W).fill(0);
+  for(let y=0;y<H;y+=1)for(let x=0;x<W;x+=1){const i=(y*W+x)*4;const r=D.data[i],g=D.data[i+1],b=D.data[i+2];const mx=Math.max(r,g,b),mn=Math.min(r,g,b);if(mx<110&&mx-mn<70){rowC[y]++;colC[x]++}}
+  const rows=[],cols=[];rowC.forEach((c,y)=>{if(c>W*0.55)rows.push(y)});colC.forEach((c,x)=>{if(c>H*0.55)cols.push(x)});
+  if(rows.length<2||cols.length<2)return {x:0,y:0,w:W,h:H,ok:false};const y0=Math.min(...rows),y1=Math.max(...rows),x0=Math.min(...cols),x1=Math.max(...cols);
+  if(y1-y0<H*0.3||x1-x0<W*0.3)return {x:0,y:0,w:W,h:H,ok:false};return {x:x0,y:y0,w:x1-x0,h:y1-y0,ok:true}}
+function lrBuildTemplate(D,clicks){const F=lrFrame(D);const pts={};let pitchs={};
+  [1,2,3,4,5].forEach(r=>{const a=clicks.find(c=>c.r===r&&c.first),b=clicks.find(c=>c.r===r&&!c.first);if(!a||!b)return;const res=lrCenters(D,[a.x,a.y],[b.x,b.y],LR_EXP[r]);
+    LR_NUMS[r].forEach((v,i)=>{pts[v]=[(res.pts[i][0]-F.x)/F.w,(res.pts[i][1]-F.y)/F.h]});pitchs[r]=res.pitch/F.w});
+  return {pts,pitchs,frameOk:F.ok}}
+function lrRead(D,tpl){const F=lrFrame(D);const vagas={},duvidas=[],marks=[];
+  Object.entries(tpl.pts).forEach(([v,p])=>{v=+v;const r=rua(v);const x=F.x+p[0]*F.w,y=F.y+p[1]*F.h;const rad=Math.max(3,Math.round((tpl.pitchs[r]||0.01)*F.w*0.36));
+    const c=lrClassify(D,[x,y],rad);let k=c.k==="V"?"V":c.k;vagas[v]=k;if(c.d>70)duvidas.push(v);marks.push({v,x,y,k,doubt:c.d>70})});
+  return {vagas,gaiolas:{},duvidas,marks,frameOk:F.ok}}
+
+/* Leitura automática para o desenho padrão SVC: usa a geometria do próprio formulário,
+   normalizada pela largura/altura da imagem. Não depende de IA, API ou calibração manual. */
+const LR_REF_W=1600,LR_REF_H=604;
+const LR_AUTO={
+  1:{a:[161,182],b:[161,423],nums:LR_NUMS[1]},
+  2:{a:[248,182],b:[248,439],nums:LR_NUMS[2]},
+  3:{a:[351,160],b:[1245,160],nums:LR_NUMS[3]},
+  4:{a:[1420,308],b:[1420,438],nums:LR_NUMS[4]},
+  5:{a:[379,507],b:[1090,507],nums:LR_NUMS[5]}
+};
+function lrAutoRead(D){
+  const sx=D.width/LR_REF_W,sy=D.height/LR_REF_H,aspect=D.width/D.height;
+  if(aspect<2.35||aspect>2.95)throw {code:'layout_shape'};
+  const vagas={},duvidas=[],marks=[];let score=0,read=0;
+  Object.entries(LR_AUTO).forEach(([rr,z])=>{const n=z.nums.length;
+    z.nums.forEach((v,i)=>{const t=n===1?0:i/(n-1);const x=(z.a[0]+(z.b[0]-z.a[0])*t)*sx,y=(z.a[1]+(z.b[1]-z.a[1])*t)*sy;
+      const rad=Math.max(3,Math.round(Math.min(sx,sy)*5));const c=lrClassify(D,[x,y],rad);
+      vagas[v]=c.k;read++;score+=Math.min(c.d||0,120);if(c.d>82)duvidas.push(v);marks.push({v,x,y,k:c.k,doubt:c.d>82});
+    });
+  });
+  const pc=Object.values(vagas).filter(k=>k==='PC').length;const avg=score/Math.max(1,read);
+  // proteção contra o erro antigo: se quase tudo virar branco/PC, não deixa aplicar.
+  if(pc>55||avg>92)throw {code:'layout_invalid'};
+  return {vagas,gaiolas:{},duvidas,marks,frameOk:true,avg};
+}
+
+
 const API_MODEL_DEF="claude-sonnet-5-5";
 async function fileToB64(f){const url=URL.createObjectURL(f);try{const im=await new Promise((r,j)=>{const m=new Image();m.onload=()=>r(m);m.onerror=j;m.src=url});
   const mx=2400,k=Math.min(1,mx/Math.max(im.naturalWidth,im.naturalHeight));const c=document.createElement("canvas");c.width=Math.round(im.naturalWidth*k);c.height=Math.round(im.naturalHeight*k);
@@ -369,7 +448,18 @@ function ReadModal({cur,onClose,onApply}){
   const [cfgOpen,setCfgOpen]=useState(false);
   useEffect(()=>{let ok=true;(async()=>{try{const s=window.claude?.use?await window.claude.use("sample"):null;if(!s){ok&&setAvail(false);return}
       const lim=await s.limits().catch(()=>null);ok&&setAvail(!!lim?.images)}catch(e){ok&&setAvail(false)}})();return()=>{ok=false}},[]);
-  const useApi=avail===false;const canRead=avail===true||(useApi&&key.trim().length>20);
+  const [engine,setEngine]=useState("local");
+  const useApi=engine==="api";const canRead=engine==="claude"||(useApi&&key.trim().length>20);
+  // ---- leitura local (grátis)
+  const [li,setLi]=useState(null);const [calib,setCalib]=useState(null);const [tplVer,setTplVer]=useState(0);
+  const tplKey="svc-tpl-"+target;const tpl=useMemo(()=>{try{return JSON.parse(localStorage.getItem(tplKey)||"null")}catch(e){return null}},[tplKey,tplVer]);
+  useEffect(()=>{if(!files[0]){setLi(null);return}let ok=true;const u=URL.createObjectURL(files[0]);const im=new Image();
+    im.onload=()=>{if(!ok)return;try{setLi({url:u,w:im.naturalWidth,h:im.naturalHeight,D:lrImageData(im)})}catch(e){setErr("Não consegui abrir essa imagem.")}};im.src=u;return()=>{ok=false;URL.revokeObjectURL(u)}},[files[0]]);
+  const localRead=()=>{if(!li)return;setErr("");try{const r=lrAutoRead(li.D);setRes({vagas:r.vagas,gaiolas:{},duvidas:r.duvidas,titulo:"Leitura automática local",ciclo:target,marks:r.marks,local:true})}catch(e){setRes(null);setErr(e?.code==="layout_shape"?"A imagem não está no formato do layout SVC completo. Envie o print inteiro, sem cortar as laterais.":"Leitura inválida — não apliquei nada. O desenho não alinhou com as vagas. Envie o print completo e reto.")}};
+  const imgClick=e=>{if(!calib||!li)return;const rc=e.currentTarget.getBoundingClientRect();const x=(e.clientX-rc.left)/rc.width*li.w,y=(e.clientY-rc.top)/rc.height*li.h;
+    const step=LR_CLICKS[calib.length];const nc=[...calib,{r:step[0],v:step[1],first:calib.length%2===0,x,y}];
+    if(nc.length<LR_CLICKS.length){setCalib(nc);return}
+    const T=lrBuildTemplate(li.D,nc);try{localStorage.setItem(tplKey,JSON.stringify(T))}catch(e){}setCalib(null);setTplVer(v=>v+1);localRead(T)};
   useEffect(()=>{const onP=e=>{const fs=[...(e.clipboardData?.files||[])].filter(f=>f.type.startsWith("image/"));if(fs.length){e.preventDefault();setFiles(p=>[...p,...fs].slice(0,4));setRes(null)}};
     window.addEventListener("paste",onP);return()=>window.removeEventListener("paste",onP)},[]);
   const add=list=>{const fs=[...list].filter(f=>f.type.startsWith("image/"));if(fs.length){setFiles(p=>[...p,...fs].slice(0,4));setRes(null);setErr("")}};
@@ -391,6 +481,10 @@ function ReadModal({cur,onClose,onApply}){
     <${motion.div} onClick=${e=>e.stopPropagation()} initial=${{y:24}} animate=${{y:0}} exit=${{y:24,opacity:0}} transition=${spring} class=${box} style=${{background:"rgba(16,20,26,.97)"}}>
       <div class="flex items-center justify-between gap-3"><div><div class="text-[11px] uppercase tracking-[.16em] text-muted font-semibold">Ler desenho do layout</div><div class="font-display text-lg">Mande o print e o app monta o layout</div></div>
         <button type="button" onClick=${onClose} disabled=${busy} class="text-muted hover:text-ink text-sm px-3 py-1.5 rounded-full border border-white/15">Fechar</button></div>
+      ${false&&engine&&!res&&html`<div class="flex flex-wrap items-center gap-2 text-xs">
+        <span class="text-muted">Como ler:</span>
+        ${[["local","Grátis (no aparelho)"],...(avail?[["claude","Claude"]]:[]),["api","API Anthropic (paga)"]].map(([id,t])=>html`<button key=${id} type="button" id=${"eng-"+id} onClick=${()=>setEngine(id)} class=${"px-3 py-1.5 rounded-full font-semibold "+(engine===id?"bg-white text-black":"border border-white/15 text-muted hover:text-ink")}>${t}</button>`)}
+      </div>`}
       ${useApi&&html`<div class="rounded-2xl px-3 py-3 text-sm flex flex-col gap-2" style=${{background:key?"rgba(52,211,153,.08)":"rgba(255,181,71,.1)",color:key?"#5ee6b0":"var(--amber)"}}>
         <div>${key?"Leitura pela API da Anthropic (chave salva neste navegador).":"Fora do Claude (arquivo ou GitHub) a leitura usa a API da Anthropic. Cole sua chave uma vez: ela fica salva só neste navegador."}
           <button type="button" onClick=${()=>setCfgOpen(!cfgOpen)} class="underline underline-offset-2 ml-1 text-ink">${key?(cfgOpen?"fechar":"trocar chave"):""}</button></div>
@@ -407,9 +501,28 @@ function ReadModal({cur,onClose,onApply}){
         <label for="readFile" class="cursor-pointer text-sm font-semibold px-4 py-2 rounded-full bg-white text-black text-center">Escolher imagem</label>
         <input id="readFile" type="file" accept="image/png,image/jpeg,image/webp" multiple class="sr-only" onChange=${e=>{add(e.target.files);e.target.value=""}}/>
       </div>`}
-      ${files.length>0&&!res&&html`<div class="flex flex-wrap gap-2">${thumbs.map((u,i)=>html`<div key=${u} class="relative"><img src=${u} alt=${"Desenho "+(i+1)} class="h-24 rounded-xl border border-line bg-white"/>
+      ${engine==="local"&&!res&&files.length>0&&html`<div class="flex flex-col gap-3">
+        <div class="flex flex-wrap items-center gap-2 text-sm">
+          <label for="localTarget">Esse desenho é do ciclo</label>
+          <select id="localTarget" value=${target} onChange=${e=>{setTarget(e.target.value);setCalib(null)}} class="bg-white/5 border border-line rounded-lg px-2 py-1.5 text-sm text-ink">${Object.keys(LAYOUTS).map(k=>html`<option key=${k} value=${k}>${k}</option>`)}</select>
+          <span class="text-xs" style=${{color:"#5ee6b0"}}>leitura automática · sem IA · sem API</span>
+        </div>
+        ${false&&calib&&html`<div class="rounded-2xl px-3 py-2.5 text-sm font-semibold" style=${{background:"rgba(76,195,255,.12)",color:"var(--accent)"}}>
+          ${calib.length+1}/10 · Clique no centro da ${LR_CLICKS[calib.length][2]}
+          <button type="button" onClick=${()=>setCalib(calib.slice(0,-1))} disabled=${!calib.length} class="ml-3 text-xs underline text-ink">voltar um</button>
+          <button type="button" onClick=${()=>setCalib(null)} class="ml-2 text-xs underline text-muted">cancelar</button></div>`}
+        ${li&&html`<div class="relative w-full rounded-xl overflow-hidden bg-white select-none" style=${{cursor:"default"}}>
+          <img src=${li.url} alt="Desenho do layout" class="w-full h-auto block pointer-events-none"/>
+          ${[].map((c,i)=>html`<span key=${i} class="absolute w-4 h-4 -ml-2 -mt-2 rounded-full border-2 border-white pointer-events-none" style=${{left:(c.x/li.w*100)+"%",top:(c.y/li.h*100)+"%",background:"#e5262a"}}></span>`)}
+        </div>`}
+        <div class="flex flex-wrap items-center gap-2">
+          <${motion.button} ...${tactile} type="button" id="localRead" onClick=${()=>localRead()} disabled=${!li} class="text-sm font-semibold px-5 py-2.5 rounded-full" style=${{background:"var(--accent)",color:"#04121b"}}>Ler desenho grátis</${motion.button}>
+          <span class="text-xs text-muted">O app alinha as 5 ruas automaticamente e lê as cores das 97 vagas. Se o alinhamento falhar, ele bloqueia a aplicação.</span>
+        </div>
+      </div>`}
+      ${engine!=="local"&&files.length>0&&!res&&html`<div class="flex flex-wrap gap-2">${thumbs.map((u,i)=>html`<div key=${u} class="relative"><img src=${u} alt=${"Desenho "+(i+1)} class="h-24 rounded-xl border border-line bg-white"/>
         <button type="button" onClick=${()=>setFiles(files.filter((_,j)=>j!==i))} class="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-black/80 text-xs" aria-label="Tirar imagem">×</button></div>`)}</div>`}
-      ${!res&&html`<div class="flex flex-wrap items-center gap-2">
+      ${!res&&engine!=="local"&&html`<div class="flex flex-wrap items-center gap-2">
         <${motion.button} ...${tactile} type="button" id="readBtn" disabled=${!files.length||busy||!canRead} onClick=${read} class=${"text-sm font-semibold px-5 py-2.5 rounded-full "+(files.length&&!busy&&canRead?"":"opacity-40")} style=${{background:"var(--accent)",color:"#04121b"}}>${busy?"Lendo o desenho…":"Ler desenho"}</${motion.button}>
         ${busy&&html`<button type="button" onClick=${()=>ctl.current?.abort()} class="text-sm text-muted hover:text-ink">Parar</button><span class="text-xs text-muted">Pode levar até 1 minuto.</span>`}
       </div>`}
@@ -418,12 +531,16 @@ function ReadModal({cur,onClose,onApply}){
       ${res&&html`<div class="flex flex-col gap-3">
         <div class="flex flex-wrap gap-2 text-xs">
           <span class="px-2.5 py-1 rounded-full" style=${{background:"rgba(52,211,153,.12)",color:"#5ee6b0"}}>${Object.keys(res.vagas).length} vagas lidas</span>
-          <span class="px-2.5 py-1 rounded-full" style=${{background:"rgba(52,211,153,.12)",color:"#5ee6b0"}}>${Object.keys(res.gaiolas).length} gaiolas lidas</span>
+          ${!res.local&&html`<span class="px-2.5 py-1 rounded-full" style=${{background:"rgba(52,211,153,.12)",color:"#5ee6b0"}}>${Object.keys(res.gaiolas).length} gaiolas lidas</span>`}${res.local&&html`<span class="px-2.5 py-1 rounded-full bg-white/[.06] text-muted">Gaiolas: vêm do planejamento (Organizar rotas)</span>`}
           ${res.duvidas.length>0&&html`<span class="px-2.5 py-1 rounded-full" style=${{background:"rgba(255,181,71,.12)",color:"var(--amber)"}}>Conferir: vagas ${res.duvidas.join(", ")}</span>`}
           ${res.titulo&&html`<span class="px-2.5 py-1 rounded-full bg-white/[.06] text-muted">${res.titulo}</span>`}
         </div>
+        ${res.local&&li&&html`<div class="relative w-full rounded-xl overflow-hidden bg-white"><img src=${li.url} alt="Desenho lido" class="w-full h-auto block"/>
+          ${res.marks.map(m=>{const c=CARRIERS[m.k]||CARRIERS.V;return html`<span key=${m.v} title=${"Vaga "+m.v+": "+c.n} class="absolute -translate-x-1/2 -translate-y-1/2 rounded-full font-mono font-bold flex items-center justify-center pointer-events-none" style=${{left:(m.x/li.w*100)+"%",top:(m.y/li.h*100)+"%",width:"18px",height:"18px",fontSize:"8px",background:c.bg,color:c.fg,boxShadow:m.doubt?"0 0 0 2px #ffb547":"0 0 0 1.5px #fff,0 0 0 2.5px #000"}}>${m.v}</span>`})}
+        </div>
+        <p class="text-xs text-muted">Cada bolinha mostra onde o app leu a vaga. Se alguma cair fora do quadradinho, a imagem não está no padrão esperado e não deve ser aplicada.</p>`}
         <div class="grid gap-1" style=${{gridTemplateColumns:"repeat(auto-fill,minmax(46px,1fr))"}}>
-          ${Array.from({length:97},(_,i)=>i+1).map(v=>{const k=res.vagas[v]||"V";const c=CARRIERS[k];const dv=res.duvidas.includes(v);
+          ${Array.from({length:97},(_,i)=>i+1).filter(v=>v!==33).map(v=>{const k=res.vagas[v]||"V";const c=CARRIERS[k];const dv=res.duvidas.includes(v);
             return html`<div key=${v} title=${res.gaiolas[v]||""} class="rounded-md text-center leading-tight py-1" style=${{background:c.bg,color:c.fg,boxShadow:dv?"0 0 0 2px var(--amber)":"inset 0 0 0 1px rgba(0,0,0,.3)"}}>
               <div class="font-mono text-[9px] opacity-80">${v}</div><div class="font-display text-[10px]">${k==="V"?"—":k}</div>${res.gaiolas[v]&&html`<div class="font-mono text-[8px] truncate px-0.5">${res.gaiolas[v]}</div>`}</div>`})}
         </div>
@@ -769,9 +886,26 @@ function CarrierBlock({gkey,list,ondas,note,vagas}){
   </${motion.div}>`;
 }
 
+/* ============ GUIADA ONLINE · página pública somente leitura ============ */
+const GUIADA_CFG_KEY="svc-guiada-online-config";
+function getGuiadaCfg(){try{return JSON.parse(localStorage.getItem(GUIADA_CFG_KEY)||"{}")||{}}catch(e){return {}}}
+function setGuiadaCfg(v){try{localStorage.setItem(GUIADA_CFG_KEY,JSON.stringify(v||{}))}catch(e){}}
+function guiadaPayload(cur,ciclo,items){
+  return {layout:cur,ciclo,updated_at:new Date().toISOString(),ruas:buildRuas(items).map(s=>({n:s.n,title:s.title,sub:s.sub,count:s.count,carriers:s.carriers.map(c=>({k:c.k,name:c.name,routes:c.routes.map(r=>({rota:gName(r),vaga:r.vaga||null,sacas:gSacas(r)?gSacas(r).split(/\s*,\s*/).filter(Boolean):[],qtd_sacas:(r.children||[]).length}))}))}))};
+}
+async function publishGuiadaOnline(cur,ciclo,items){
+  const cfg=getGuiadaCfg(),url=String(cfg.url||"").replace(/\/$/,""),key=String(cfg.key||"").trim(),slug=String(cfg.slug||"megario").trim().toLowerCase().replace(/[^a-z0-9_-]/g,"-")||"megario";
+  if(!url||!key)throw {code:"config"};
+  const data=guiadaPayload(cur,ciclo,items);
+  const r=await fetch(url+"/rest/v1/svc_guiadas?on_conflict=slug",{method:"POST",headers:{"apikey":key,"Authorization":"Bearer "+key,"Content-Type":"application/json","Prefer":"resolution=merge-duplicates,return=representation"},body:JSON.stringify({slug,data,updated_at:data.updated_at})});
+  if(!r.ok)throw {code:"publish",message:await r.text()};
+  return {slug,data,viewer:cfg.viewer||"guiada.html"};
+}
+
 /* ============ GUIADA (por rua, tabela ROTA | ONDA | PARADAS | VAGA) ============ */
 const RUA_NOME_G=["","Coluna esquerda · ímpares","Coluna esquerda · pares","Ao lado da esteira","Lado direito · VUC","Frente do mezanino · Expedição"];
 function gName(r){return shortTag(r.gaiola&&normTxt(r.gaiola)!=="SACA"?r.gaiola:r.rota)}
+function gSacas(r){if(!r.children||!r.children.length)return "";const ids=(r.sacaIds&&r.sacaIds.length?r.sacaIds:r.children.map(c=>{const m=String(c.rota||"").match(/_(\d+)$/);return m?m[1]:shortTag(c.rota)})).filter(Boolean);return ids.join(", ")}
 const byOndaVaga=(a,b)=>(a.onda||99)-(b.onda||99)||(a.vaga||999)-(b.vaga||999)||String(gName(a)).localeCompare(gName(b),"pt",{numeric:true});
 // rotas sem gaiola marcada no layout: interpreta o desenho e coloca cada rota numa vaga livre da transportadora
 function autoPlace(items,L){
@@ -789,7 +923,7 @@ function buildRuas(items){
 function guiadaText(cur,ciclo,items){const d=new Date().toLocaleDateString("pt-BR");let t=`*GUIADA – ${ciclo}*\nLayout ${cur} · ${d}\n`;
   buildRuas(items).forEach(s=>{t+=`\n━━━━━━━━━━\n*GUIADA · ${s.title}*\n${s.sub}\n`;
     s.carriers.forEach(c=>{t+=`\n▸ *${c.name}*\nROTA | ONDA | PARADAS | VAGA\n`;
-      c.routes.forEach(r=>{t+=`${gName(r)}${r.children.length?" (+"+r.children.length+" sacas)":""} | ${r.onda||"—"} | ${r.parada!==""?r.parada:"—"} | ${r.vaga||"—"}\n`})})});
+      c.routes.forEach(r=>{t+=`${gName(r)}${r.children.length?" (Sacas: "+gSacas(r)+")":""} | ${r.onda??"—"} | ${(r.parada!==""&&r.parada!=null)?r.parada:"—"} | ${r.vaga||"—"}\n`})})});
   return t}
 async function renderGuiadaPages(cur,ciclo,items){
   try{await document.fonts.ready}catch(e){}
@@ -816,18 +950,18 @@ async function renderGuiadaPages(cur,ciclo,items){
     g.textAlign="right";g.font=F(700,24);g.fillText(`página ${pi+1}/${total}`,W-P,124);
     const drawRoute=(r,cc,x0,cols,y,big)=>{g.textBaseline="middle";g.fillStyle="#111";g.textAlign="left";g.font=F(800,big?38:32);let nm=gName(r);
       const maxW=cols[1].x-cols[0].x-(big?60:40);while(g.measureText(nm).width>maxW&&nm.length>2)nm=nm.slice(0,-1);g.fillText(nm,cols[0].x,y+RH/2);
-      if(r.children.length){const w=g.measureText(nm).width;g.font=F(700,big?22:18);g.fillStyle="#b45309";g.fillText(`+${r.children.length}${big?" sacas":"s"}`,cols[0].x+w+8,y+RH/2+2)}
-      g.textAlign="center";g.font=F(800,big?36:30);g.fillStyle="#111";g.fillText(r.onda?String(r.onda):"—",cols[1].x,y+RH/2);g.fillText(r.parada!==""?String(r.parada):"—",cols[2].x,y+RH/2);
+      if(r.children.length){const w=g.measureText(nm).width;g.font=F(700,big?20:16);g.fillStyle="#b45309";let st="S: "+gSacas(r);const lim=cols[1].x-(cols[0].x+w+12)-8;while(g.measureText(st).width>lim&&st.length>5)st=st.slice(0,-2);g.fillText(st,cols[0].x+w+8,y+RH/2+2)}
+      g.textAlign="center";g.font=F(800,big?36:30);g.fillStyle="#111";g.fillText(r.onda!=null?String(r.onda):"—",cols[1].x,y+RH/2);g.fillText((r.parada!==""&&r.parada!=null)?String(r.parada):"—",cols[2].x,y+RH/2);
       if(r.vaga){const pw=big?100:76;g.fillStyle="#0a4d8c";rr(cols[3].x-pw/2,y+10,pw,RH-20,10);g.fill();g.fillStyle="#fff";g.fillText(String(r.vaga),cols[3].x,y+RH/2)}else{g.fillStyle="#9ca3af";g.fillText("—",cols[3].x,y+RH/2)}};
     pages[pi].ops.forEach(op=>{const y=op.y;g.textBaseline="middle";
-      if(op.t==="rua"){g.fillStyle="#111827";rr(P,y,W-2*P,78,14);g.fill();g.fillStyle="#fff";g.textAlign="left";g.font=F(800,40);g.fillText(op.s.title+(op.cont?" (continuação)":""),P+24,y+40);
+      if(op.t==="rua"){g.fillStyle="#111827";rr(P,y,W-2*P,78,14);g.fill();g.fillStyle="#fff";g.textAlign="left";g.font=F(800,40);g.fillText("GUIADA · "+op.s.title+(op.cont?" (continuação)":""),P+24,y+40);
         g.textAlign="right";g.font=F(600,24);g.fillStyle="#cbd5e1";g.fillText(op.cont?"":plural(op.s.count,"rota","rotas"),W-P-24,y+40)}
       if(op.t==="cols"){g.fillStyle="#374151";rr(P,y+4,W-2*P,42,10);g.fill();g.fillStyle="#fff";g.font=F(800,compact?20:24);
         (compact?[...colsHalf(P),...colsHalf(P+HALF+16)]:colsFull).forEach(c=>{g.textAlign=c.al;g.fillText(c.t,c.x,y+26)})}
       if(op.t==="car"){const cc=CARRIERS[op.c.k]||{bg:"#9ca3af",fg:"#fff"};
         g.fillStyle=cc.bg;rr(P,y+8,W-2*P,58,12);g.fill();g.strokeStyle="rgba(0,0,0,.28)";g.lineWidth=2;g.stroke();
         g.fillStyle=cc.fg;g.textAlign="left";g.font=F(800,34);g.fillText((op.c.k?op.c.k+"  ·  ":"")+op.c.name+(op.cont?" (cont.)":""),P+22,y+38);
-        const par=op.c.routes.reduce((a,r)=>a+(typeof r.parada==="number"?r.parada:0),0);
+        const par=op.c.routes.reduce((a,r)=>a+(Number.isFinite(+r.parada)?+r.parada:0),0);
         g.textAlign="right";g.font=F(700,24);g.fillText(plural(op.c.routes.length,"rota","rotas")+(par?" · "+par+" par.":""),W-P-22,y+39)}
       if(op.t==="line"){const cc=CARRIERS[op.c.k]||{bg:"#9ca3af"};
         if(compact){op.rs.forEach((r,j)=>{const x0=P+j*(HALF+16);g.fillStyle=op.i%2?"#eef1f5":"#ffffff";rr(x0,y+3,HALF,RH-6,10);g.fill();g.fillStyle=cc.bg;rr(x0,y+3,8,RH-6,4);g.fill();drawRoute(r,cc,x0,colsHalf(x0),y,false)})}
@@ -844,6 +978,9 @@ async function shareBlobs(blobs,base,text,setMsg,idx,openGroup){
   setMsg(copied?`Página ${i+1} copiada: no grupo, Ctrl+V e Enter.`+(blobs.length>i+1?` Depois toque em "Copiar página ${i+2}".`:""):"Não deu para copiar sozinho, use Baixar.")}
 function GuiadaModal({cur,ciclo,items,onClose}){
   const [blobs,setBlobs]=useState(null);const [urls,setUrls]=useState([]);const [msg,setMsg]=useState("");
+  const [onlineCfg,setOnlineCfg]=useState(()=>getGuiadaCfg());const [cfgOpen,setCfgOpen]=useState(false);const [publishing,setPublishing]=useState(false);
+  const saveOnline=(k,v)=>{const n={...onlineCfg,[k]:v};setOnlineCfg(n);setGuiadaCfg(n)};
+  const publishOnline=async()=>{setPublishing(true);setMsg("Publicando Guiada...");try{const r=await publishGuiadaOnline(cur,ciclo,items);setMsg("Guiada publicada. O link mostra somente as Guiadas e atualiza com a publicação mais recente.");const base=String(r.viewer||"guiada.html");const sep=base.includes("?")?"&":"?";const link=base+sep+"g="+encodeURIComponent(r.slug);try{await navigator.clipboard.writeText(link);setMsg("Guiada publicada e link copiado: "+link)}catch(e){setMsg("Guiada publicada: "+link)}}catch(e){setMsg(e&&e.code==="config"?"Configure Supabase e o endereço do guiada.html em ⚙ Guiada online.":"Não consegui publicar a Guiada. Confira a configuração do Supabase.")}finally{setPublishing(false)}};
   useEffect(()=>{let us=[],ok=true;renderGuiadaPages(cur,ciclo,items).then(bs=>{if(!ok)return;us=bs.map(b=>URL.createObjectURL(b));setBlobs(bs);setUrls(us)});return()=>{ok=false;us.forEach(u=>URL.revokeObjectURL(u))}},[]);
   const base=`guiada-${ciclo}-${new Date().toLocaleDateString("pt-BR").replace(/\//g,"-")}`;
   const text=guiadaText(cur,ciclo,items);const autoN=items.filter(r=>r.auto).length;
@@ -871,11 +1008,21 @@ function GuiadaModal({cur,ciclo,items,onClose}){
       </div>
       <div class="flex flex-wrap items-center gap-2">
         <${motion.button} ...${tactile} type="button" id="shareGuiada" disabled=${!blobs} onClick=${()=>shareBlobs(blobs,base,text,setMsg,0,true)} class="inline-flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-full" style=${{background:"#25d366",color:"#062b16"}}>${WA_ICON}Compartilhar no WhatsApp</${motion.button}>
+        <${motion.button} ...${tactile} type="button" onClick=${publishOnline} disabled=${publishing} class="text-sm font-semibold px-4 py-2 rounded-full" style=${{background:"var(--accent)",color:"#04121b"}}>${publishing?"Publicando...":"🔗 Publicar Guiada online"}</${motion.button}>
+        <button type="button" onClick=${()=>setCfgOpen(!cfgOpen)} class="text-xs text-muted hover:text-ink underline underline-offset-2">⚙ Guiada online</button>
         <${motion.button} ...${tactile} type="button" id="copyGuiada" onClick=${copyText} class="text-sm font-medium px-4 py-2 rounded-full border border-white/20">Copiar texto</${motion.button}>
         <${motion.button} ...${tactile} type="button" onClick=${dlAll} disabled=${!blobs} class="text-sm font-medium px-4 py-2 rounded-full border border-white/20">Baixar ${blobs&&blobs.length>1?"páginas":"PNG"}</${motion.button}>
         <${motion.button} ...${tactile} type="button" id="pdfGuiada" onClick=${pdfAll} disabled=${!blobs} class="text-sm font-medium px-4 py-2 rounded-full border border-white/20">Baixar PDF (todas)</${motion.button}>
         <span class="text-xs" style=${{color:msg?"var(--accent)":"var(--muted)"}}>${msg||"Cada rua começa numa página nova."}</span>
       </div>
+      ${cfgOpen&&html`<div class="rounded-2xl border border-white/10 bg-white/[.04] p-3 grid gap-2">
+        <div class="text-xs font-semibold">Configuração da Guiada online</div>
+        <input value=${onlineCfg.url||""} onInput=${e=>saveOnline("url",e.target.value.trim())} placeholder="Supabase URL · https://xxxx.supabase.co" class="w-full bg-black/20 border border-line rounded-xl px-3 py-2 text-xs outline-none"/>
+        <input value=${onlineCfg.key||""} onInput=${e=>saveOnline("key",e.target.value.trim())} placeholder="Supabase publishable/anon key" class="w-full bg-black/20 border border-line rounded-xl px-3 py-2 text-xs outline-none"/>
+        <input value=${onlineCfg.viewer||""} onInput=${e=>saveOnline("viewer",e.target.value.trim())} placeholder="Link público do guiada.html" class="w-full bg-black/20 border border-line rounded-xl px-3 py-2 text-xs outline-none"/>
+        <input value=${onlineCfg.slug||"megario"} onInput=${e=>saveOnline("slug",e.target.value)} placeholder="Código do link · megario" class="w-full bg-black/20 border border-line rounded-xl px-3 py-2 text-xs outline-none"/>
+        <div class="text-[11px] text-muted">A página pública recebe somente Rua, Transportadora, Rota, Vaga e Sacas. Ela não expõe o restante do app.</div>
+      </div>`}
     </${motion.div}>
   </${motion.div}>`;
 }
@@ -902,7 +1049,12 @@ function BuildBar({cur,onZeroPlan,hasPlan,onApplyRead,onDistribute,goLayout,onGu
 }
 function PlanView({cur,L,setCur,onZero,onApplyRead,onDistribute,goLayout}){
   const [src,setSrc]=useState(()=>{try{const s=JSON.parse(localStorage.getItem("svc-plan2")||"null");if(s&&s.rows)return s;if(s&&s.empty)return null}catch(e){}return parseDefault()});
-  const zeroPlan=()=>{try{localStorage.setItem("svc-plan2",JSON.stringify({empty:true}))}catch(e){}setSrc(null);setErr("")};
+  const zeroPlan=()=>{
+    // Zera o planejamento e, no mesmo comando, limpa o layout do ciclo atual.
+    try{localStorage.setItem("svc-plan2",JSON.stringify({empty:true}))}catch(e){}
+    setSrc(null);setErr("");
+    if(onZero)onZero();
+  };
   const [ruaSel,setRuaSel]=useState(0);const [paste,setPaste]=useState(false);const [err,setErr]=useState("");const [drag,setDrag]=useState(false);const [busy,setBusy]=useState(false);const [guiada,setGuiada]=useState(false);
   const rows=src?src.rows:[];const headers=src?src.headers:[];const m=src?src.map:{};
   const ciclo=src?detectCiclo(src.title||"",rows,m):null;
@@ -928,7 +1080,29 @@ function PlanView({cur,L,setCur,onZero,onApplyRead,onDistribute,goLayout}){
   if(!m.onda||routes.some(r=>r.onda==null))ondas.push("?");
   const byRua={1:{},2:{},3:{},4:{},5:{}};const semRua={};
   const vagaOf={};Object.entries(L.tags||{}).forEach(([v,t])=>{if(!t||L.map[v]==="V")return;const a=normTxt(t),b=normTxt(shortTag(t));if(!vagaOf[a])vagaOf[a]=+v;if(!vagaOf[b])vagaOf[b]=+v});
-  const placed=routes.map(r0=>{const vv=vagaOf[normTxt(r0.gaiola)]||vagaOf[normTxt(r0.rota)];return vv?{...r0,vaga:vv,ruasFix:[rua(vv)]}:r0});
+  // Reforço para a GUIADA: mesmo quando o mapeamento automático não marcou ONDA/PARADAS,
+  // procura esses campos diretamente no planejamento e cruza por GAIOLA/ROTA.
+  const hdrOnda=m.onda||headers.find(h=>/ONDA|WAVE/i.test(normTxt(h)))||headers.find(h=>rows.slice(0,80).filter(r=>/ONDA\s*\d+|SEM ONDA/i.test(String(r[h]||""))).length>=3)||null;
+  const hdrPar=m.parada||headers.find(h=>/PARAD|STOP/i.test(normTxt(h)))||null;
+  const planInfo=new Map();
+  const addPlanKey=(key,inf)=>{key=normTxt(key);if(!key)return;const keys=[key,normTxt(shortTag(key))];keys.forEach(k=>{if(!k)return;const old=planInfo.get(k)||{};planInfo.set(k,{onda:old.onda??inf.onda,parada:(old.parada!==undefined&&old.parada!=="")?old.parada:inf.parada})})};
+  rows.forEach(rr=>{
+    const onda=hdrOnda?ondaNum(rr[hdrOnda]):null;
+    const parada=hdrPar?numOr(rr[hdrPar]):"";
+    const inf={onda,parada};
+    // Indexa tanto ROTA quanto GAIOLA. Também procura padrões de rota/gaiola em qualquer coluna,
+    // para funcionar mesmo se o mapeamento salvo no navegador estiver antigo.
+    if(m.gaiola&&rr[m.gaiola])addPlanKey(rr[m.gaiola],inf);
+    if(m.rota&&rr[m.rota])addPlanKey(rr[m.rota],inf);
+    headers.forEach(h=>{const v=String(rr[h]||"").trim();if(/^SACA$/i.test(v)||/^[A-Z]{1,4}\d*[_-]\d+/i.test(v)||/^[A-Z]{1,3}\d+_[A-Z]{2,4}\d*$/i.test(v))addPlanKey(v,inf)});
+  });
+  const enrichPlan=r=>{
+    const keys=[r.gaiola,r.rota,gName(r)].filter(Boolean).flatMap(x=>[normTxt(x),normTxt(shortTag(x))]);
+    let inf=null;for(const k of keys){if(planInfo.has(k)){inf=planInfo.get(k);if(inf.onda!=null||inf.parada!=="")break}}
+    if(!inf)return r;
+    return {...r,onda:inf.onda??r.onda,parada:(inf.parada!==""&&inf.parada!=null)?inf.parada:r.parada};
+  };
+  const placed=routes.map(r0=>{r0=enrichPlan(r0);const vv=vagaOf[normTxt(r0.gaiola)]||vagaOf[normTxt(r0.rota)]||vagaOf[normTxt(gName(r0))];return vv?{...r0,vaga:vv,ruasFix:[rua(vv)]}:r0});
   placed.forEach(r=>{const rs=r.ruasFix||(r.k?carrierRuas(L,r.k):[]);const g=r.k||normTxt(r.transpRaw)||"SEM TRANSPORTADORA";
     if(!rs.length){(semRua[g]=semRua[g]||[]).push(r);return}
     rs.forEach(n=>{if(byRua[n])(byRua[n][g]=byRua[n][g]||[]).push(r)})});
