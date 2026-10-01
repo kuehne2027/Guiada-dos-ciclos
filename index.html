@@ -50,15 +50,30 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
 <script>
 /* Bibliotecas pesadas sob demanda: a tela abre primeiro. */
 const SVC_LIBS={};
-function svcLoadScript(key,url){
+function svcLoadOne(url){return new Promise((resolve,reject)=>{const e=document.createElement("script");e.src=url;e.async=true;e.onload=()=>resolve(true);e.onerror=()=>{e.remove();reject(new Error("Falha "+url))};document.head.appendChild(e)})}
+/* tenta cada endereço em ordem: se a rede da empresa bloquear um CDN, usa o próximo */
+function svcLoadScript(key,urls,ok){
   if(SVC_LIBS[key])return SVC_LIBS[key];
-  SVC_LIBS[key]=new Promise((resolve,reject)=>{
-    const e=document.createElement("script");e.src=url;e.async=true;e.onload=()=>resolve(true);e.onerror=()=>reject(new Error("Falha ao carregar "+key));document.head.appendChild(e);
-  });return SVC_LIBS[key];
+  urls=[].concat(urls);
+  SVC_LIBS[key]=(async()=>{for(const u of urls){try{await svcLoadOne(u);if(!ok||ok())return true}catch(e){}}delete SVC_LIBS[key];throw new Error("Falha ao carregar "+key)})();
+  return SVC_LIBS[key];
 }
-const ensureXLSX=()=>window.XLSX?Promise.resolve(true):svcLoadScript("xlsx","https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js");
-const ensureJSPDF=()=>window.jspdf?Promise.resolve(true):svcLoadScript("jspdf","https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js");
-const ensureSupabaseLib=()=>window.supabase?Promise.resolve(true):svcLoadScript("supabase","https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2");
+const ensureXLSX=()=>window.XLSX?Promise.resolve(true):svcLoadScript("xlsx",["https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js","https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js","https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"],()=>!!window.XLSX);
+const ensureJSPDF=()=>window.jspdf?Promise.resolve(true):svcLoadScript("jspdf",["https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js","https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js","https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"],()=>!!window.jspdf);
+const ensureSupabaseLib=()=>window.supabase?Promise.resolve(true):svcLoadScript("supabase",["https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2","https://unpkg.com/@supabase/supabase-js@2"],()=>!!window.supabase);
+/* lê CSV/TXT respeitando a codificação (UTF-8, UTF-16 do Excel "Texto Unicode" ou ANSI/Latin-1) */
+async function svcReadText(f){const buf=new Uint8Array(await f.arrayBuffer());
+  if(buf[0]===0xFF&&buf[1]===0xFE)return new TextDecoder("utf-16le").decode(buf.subarray(2));
+  if(buf[0]===0xFE&&buf[1]===0xFF)return new TextDecoder("utf-16be").decode(buf.subarray(2));
+  if(buf.length>3&&buf[1]===0&&buf[3]===0&&buf[0]!==0)return new TextDecoder("utf-16le").decode(buf);
+  try{return new TextDecoder("utf-8",{fatal:true}).decode(buf).replace(/^\uFEFF/,"")}catch(e){return new TextDecoder("windows-1252").decode(buf)}}
+/* abre qualquer planilha (xlsx/xls/xlsm/csv/txt) e devolve o workbook */
+async function svcReadWorkbook(f,opts){await ensureXLSX();
+  if(/\.(csv|txt|tsv)$/i.test(f.name)){let t=await svcReadText(f);const first=(t.split(/\r?\n/).find(l=>l.trim())||"");
+    if(first.includes("\t"))return XLSX.read(t,{type:"string",raw:true,FS:"\t",...(opts||{})});
+    if(first.split(";").length>first.split(",").length)return XLSX.read(t,{type:"string",raw:true,FS:";",...(opts||{})});
+    return XLSX.read(t,{type:"string",raw:true,...(opts||{})})}
+  return XLSX.read(new Uint8Array(await f.arrayBuffer()),{type:"array",...(opts||{})})}
 /* ============ DADOS ============ */
 const CARRIERS={
   AL:{n:"ALC",bg:"#111111",fg:"#ffffff"},
@@ -1178,8 +1193,9 @@ function PlanView({cur,L,setCur,onZero,onApplyRead,onDistribute,goLayout}){
   },[]);
   const zeroPlan=()=>{
     // Zera o planejamento e, no mesmo comando, limpa o layout do ciclo atual.
-    try{localStorage.setItem("svc-plan2",JSON.stringify({empty:true}))}catch(e){}
-    svcSavePlanRemote({empty:true});
+    const z={empty:true,savedAt:Date.now()};
+    try{localStorage.setItem("svc-plan2",JSON.stringify(z))}catch(e){}
+    svcSavePlanRemote(z);
     setSrc(null);setErr("");
     if(onZero)onZero();
   };
@@ -1187,18 +1203,17 @@ function PlanView({cur,L,setCur,onZero,onApplyRead,onDistribute,goLayout}){
   const rows=src?src.rows:[];const headers=src?src.headers:[];const m=src?src.map:{};
   const ciclo=src?detectCiclo(src.title||"",rows,m):null;
   CICLO_TAG=src?cicloTag(rows,m):"";
-  const save=obj=>{setSrc(obj);try{localStorage.setItem("svc-plan2",JSON.stringify(obj))}catch(e){}svcSavePlanRemote(obj)};
+  const save=obj=>{obj={...obj,savedAt:Date.now()};setSrc(obj);try{localStorage.setItem("svc-plan2",JSON.stringify(obj))}catch(e){}svcSavePlanRemote(obj)};
   const load=(aoa,name)=>{const t=fromAOA(aoa);if(!t.rows.length){setErr("Não encontrei linhas nessa planilha.");return}
     const gm=guessMap(t.headers);setErr((gm.rota||gm.gaiola)&&gm.transp?"":"Não achei sozinho as colunas de rota/gaiola e transportadora. Escolha abaixo quais são.");
     const obj={...t,name,at:new Date().toLocaleString("pt-BR"),map:gm};save(obj);setRuaSel(0)};
   const withSteps=fn=>{setErr("");setPaste(false);setBusy(true);setTimeout(()=>{try{fn()}finally{setBusy(false)}},850)};
   useEffect(()=>{if(ciclo&&ciclo!==cur)setCur(ciclo)},[src]);
-  const onFile=async f=>{if(!f)return;try{await ensureXLSX()}catch(e){setErr("Não consegui carregar o leitor de Excel.");return}const isTxt=/\.(csv|txt)$/i.test(f.name);const rd=new FileReader();
-    rd.onload=e=>withSteps(()=>{try{const wb=isTxt?XLSX.read(e.target.result,{type:"string",raw:true}):XLSX.read(e.target.result,{type:"array"});
+  const onFile=async f=>{if(!f)return;let wb;try{wb=await svcReadWorkbook(f,{})}catch(e){console.error(e);setErr(window.XLSX?"Não consegui ler esse arquivo. Use .xlsx, .xls ou .csv.":"Não consegui carregar o leitor de Excel. Confira a internet e tente de novo.");return}
+    withSteps(()=>{try{
       let best=null;wb.SheetNames.forEach(n=>{const aoa=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:false,defval:""});const t=fromAOA(aoa);const g=guessMap(t.headers);
         const sc=(g.rota?2:0)+(g.gaiola?2:0)+(g.onda?1:0)+t.rows.length/1e6;if(!best||sc>best.sc)best={aoa,sc}});
-      load(best?best.aoa:[],f.name)}catch(x){setErr("Não consegui ler esse arquivo. Use .xlsx, .xls ou .csv.")}});
-    isTxt?rd.readAsText(f,"utf-8"):rd.readAsArrayBuffer(f)};
+      load(best?best.aoa:[],f.name)}catch(x){console.error(x);setErr("Não consegui ler esse arquivo. Use .xlsx, .xls ou .csv.")}})};
   const onPaste=t=>{const lines=t.replace(/\r/g,"").split("\n").filter(l=>l.trim());if(lines.length<2){setErr("Cole o cabeçalho e pelo menos uma linha.");return}
     const sep=lines.some(l=>l.includes("\t"))?"\t":lines[1].includes(";")?";":",";withSteps(()=>load(lines.map(l=>l.split(sep)),"Planejamento colado"))};
   const reset=()=>{try{localStorage.removeItem("svc-plan2")}catch(e){}svcSavePlanRemote(null);setErr("");setSrc(parseDefault())};
@@ -1436,15 +1451,15 @@ const AMX=(()=>{
     if(rows.length<2)return [];const by={};rows.forEach(r=>{const c=cicloFrom(r.rota)||cicloFrom(r.gaiola)||fb||"";(by[c]=by[c]||[]).push([r.transp,r.rota,r.gaiola,c])});
     const headers=["MLP","ROTA","GAIOLA","CICLO"];
     return Object.keys(by).map(c=>({id:"txt|"+name+"|"+c+"|"+Date.now(),name:Object.keys(by).length>1?name+" · "+(c||SEMC):name,ciclo:c,headers,rows:by[c],map:detectMap(headers),txt:true}))}
-  function readFile(f){const isCsv=/\.(csv|txt)$/i.test(f.name);
-    return new Promise(res=>{const fr=new FileReader();
-      fr.onload=()=>{try{const wb=isCsv?XLSX.read(fr.result,{type:"string",raw:true}):XLSX.read(fr.result,{type:"array"});const out=[];const fileCyc=cicloFrom(f.name);
-        wb.SheetNames.forEach(sn=>{const aoa=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:"",raw:true,blankrows:false});if(aoa.length<2)return;
-          const nm=wb.SheetNames.length>1?f.name+" › "+sn:f.name;const hr=findHeaderRow(aoa);const headers=(aoa[hr]||[]).map(cell);
-          const rows=aoa.slice(hr+1).filter(r=>r.some(c=>c!==""&&c!==null)).map(r=>headers.map((_,i)=>cell(r[i])));const map=detectMap(headers);
-          if(map.id<0&&map.rota<0){out.push(...planSourcesFromLines(aoa.flat().map(cell).filter(Boolean),nm,cicloFrom(sn)||fileCyc));return}
-          out.push({id:f.name+"|"+sn+"|"+Date.now(),name:nm,ciclo:cicloFrom(sn)||fileCyc,headers,rows,map})});res(out)}catch(e){res([])}};
-      fr.onerror=()=>res([]);isCsv?fr.readAsText(f,"utf-8"):fr.readAsArrayBuffer(f)})}
+  async function readFile(f){let wb;try{wb=await svcReadWorkbook(f)}catch(e){console.error("Leitura",f.name,e);return {out:[],err:f.name}}
+    const out=[];const fileCyc=cicloFrom(f.name);
+    wb.SheetNames.forEach(sn=>{try{const aoa=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:"",raw:true,blankrows:false});if(aoa.length<2)return;
+      const nm=wb.SheetNames.length>1?f.name+" › "+sn:f.name;const hr=findHeaderRow(aoa);const headers=(aoa[hr]||[]).map(cell);
+      const rows=aoa.slice(hr+1).filter(r=>r.some(c=>c!==""&&c!==null)).map(r=>headers.map((_,i)=>cell(r[i])));const map=detectMap(headers);
+      if(map.id<0&&map.rota<0&&map.gaiola<0){out.push(...planSourcesFromLines(aoa.flat().map(cell).filter(Boolean),nm,cicloFrom(sn)||fileCyc));return}
+      if(map.rota<0&&map.gaiola>=0)map.rota=map.gaiola;
+      out.push({id:f.name+"|"+sn+"|"+Date.now(),name:nm,ciclo:cicloFrom(sn)||fileCyc,headers,rows,map})}catch(e){console.error("Aba",sn,e)}});
+    return {out,err:out.length?"":f.name}}
   const roleOf=s=>(s.map.id>=0?"i":"")+(s.map.rota>=0?"r":"");
   function addSources(add,replace){if(replace){const names=new Set(add.map(s=>s.name));
       sources=sources.filter(s=>!(s.ciclo&&add.some(a=>a.ciclo===s.ciclo&&roleOf(a)===roleOf(s)))&&!names.has(s.name))}
@@ -1622,8 +1637,9 @@ function AMaisView({layoutOf,goVaga}){
     const h=[...hist.filter(x=>!ids.includes(x.id)),...ids.map(id=>({id,t:Date.now()}))].slice(-40);setHist(h);AMX.lsSet("hist",h)};
   const importFiles=async list=>{const fs=[...list];if(!fs.length)return;
     setBusy(true);try{await ensureXLSX()}catch(e){setBusy(false);setMsg("O leitor de planilhas não carregou.");return}
-    const add=[];for(const f of fs)add.push(...await AMX.readFile(f));setBusy(false);
-    if(!add.length){setMsg("Nenhuma aba com ID do pacote ou rota foi encontrada.");return}
+    const add=[],bad=[];for(const f of fs){const r=await AMX.readFile(f);add.push(...r.out);if(r.err)bad.push(r.err)}setBusy(false);
+    if(!add.length){setMsg(bad.length?"Não achei ID do pacote, rota ou gaiola em: "+bad.join(", "):"Nenhuma aba com ID do pacote ou rota foi encontrada.");return}
+    if(bad.length)setTimeout(()=>setMsg("Sem ID/rota reconhecido em: "+bad.join(", ")),3300);
     AMX.addSources(add,true);bump();setMsg(`${add.length} aba${add.length>1?"s":""} lida${add.length>1?"s":""} · ${[...new Set(add.map(s=>s.ciclo||AMX.SEMC))].sort(AMX.cycSort).join(", ")}`)};
   const readPlanText=()=>{const lines=planTxt.split(/\r?\n/);const add=AMX.planSourcesFromLines(lines,"Planejamento colado","");
     if(!add.length){setMsg("Não achei linhas no formato TRANSPORTADORA - ROTA / GAIOLA.");return}
@@ -1729,9 +1745,11 @@ function AMaisView({layoutOf,goVaga}){
     const tsv=rows=>[Object.keys(rows[0]).join("\t"),...rows.map(o=>Object.values(o).join("\t"))].join("\n");
     body=html`
       <${Card} className="col-span-2 md:col-span-7" title="Cole os dados da aduana" right=${html`<label for="amAdFile" class="cursor-pointer text-xs font-medium px-3 py-1.5 rounded-full border border-white/20">Abrir CSV</label>`}>
-        <input id="amAdFile" type="file" accept=".csv,.txt,.xlsx,.xls" class="sr-only" onChange=${async e=>{const f=e.target.files[0];e.target.value="";if(!f)return;
-          if(/\.xlsx?$/i.test(f.name)){const wb=XLSX.read(await f.arrayBuffer(),{type:"array"});const aoa=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,defval:"",raw:false});const t=aoa.map(r=>r.join("\t")).join("\n");setAdText(t);AMX.lsSet("adText",t);applyAduana(AMX.parseAduanaAoa(aoa))}
-          else{const t=await f.text();setAdText(t);AMX.lsSet("adText",t);applyAduana(AMX.parseAduanaText(t))}}}/>
+        <input id="amAdFile" type="file" accept=".csv,.txt,.tsv,.xlsx,.xls,.xlsm" class="sr-only" onChange=${async e=>{const f=e.target.files[0];e.target.value="";if(!f)return;
+          try{if(/\.xls[xmb]?$/i.test(f.name)){const wb=await svcReadWorkbook(f);let aoa=[];for(const sn of wb.SheetNames){const a=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:"",raw:false,blankrows:false});if(a.length>1){aoa=a;break}}
+              const rows=AMX.parseAduanaAoa(aoa);const t=aoa.map(r=>r.join("\t")).join("\n");setAdText(t);AMX.lsSet("adText",t);applyAduana(rows);setMsg(rows.length?rows.length+" linhas da aduana lidas":"Não achei IDs de pacote nessa planilha.")}
+            else{const t=await svcReadText(f);const rows=AMX.parseAduanaText(t);setAdText(t);AMX.lsSet("adText",t);applyAduana(rows);setMsg(rows.length?rows.length+" linhas da aduana lidas":"Não achei IDs de pacote nesse arquivo.")}}
+          catch(x){console.error(x);setMsg("Não consegui ler esse arquivo da aduana.")}}}/>
         <label for="amAdText" class="sr-only">Dados da aduana</label>
         <textarea id="amAdText" value=${adText} onInput=${e=>setAdText(e.target.value)} spellcheck="false" rows="8" placeholder="Copie a tabela da aduana (Shipment ID, Placa, Motorista, Data auditoria, ID da rota, Estado, Rep auditoria) e cole aqui. Também aceita só a lista de IDs."
           class="w-full bg-white/5 border border-line rounded-2xl p-3 font-mono text-xs outline-none focus:border-[var(--accent)]"></textarea>
@@ -1847,7 +1865,7 @@ function AMaisView({layoutOf,goVaga}){
           :html`<div class="font-display text-lg tracking-tight">${drag?"Pode soltar":"Solte BASE, planification e planejamentos"}</div>
             <p class="text-muted text-xs">Vários arquivos e ciclos de uma vez (.xlsx, .xls, .csv). O ciclo sai do nome do arquivo ou da coluna de ciclo. Importar de novo o mesmo ciclo substitui o anterior.</p>
             <div><${motion.label} ...${tactile} for="amFiles" class="inline-block cursor-pointer text-xs font-semibold px-4 py-2 rounded-full bg-white text-black">Escolher arquivos</${motion.label}>
-            <input id="amFiles" type="file" multiple accept=".xlsx,.xls,.xlsm,.csv,.txt" class="sr-only" onChange=${e=>{importFiles(e.target.files);e.target.value=""}}/></div>`}
+            <input id="amFiles" type="file" multiple accept=".xlsx,.xls,.xlsm,.csv,.txt,.tsv" class="sr-only" onChange=${e=>{importFiles(e.target.files);e.target.value=""}}/></div>`}
         </div></${motion.section}>
       <${Card} className="col-span-2 md:col-span-5" title="Planejamento em texto">
         <p class="text-muted text-xs mb-2">Uma rota por linha, no formato <span class="font-mono text-ink">ONTIME - SD_1 / G2_SD</span>. Serve para SD e CHP (com SACA).</p>
@@ -2027,6 +2045,9 @@ async function svcEnsureSB(){
   return svcSB;
 }
 let svcRemoteReady=false, svcSaveTimer=null, svcApplyingRemote=false;
+/* o planejamento mais novo sempre ganha: evita que uma cópia antiga do servidor apague o que acabou de ser importado */
+const svcPlanTime=p=>p&&typeof p==="object"&&+p.savedAt||0;
+function svcLocalPlan(){try{return JSON.parse(localStorage.getItem("svc-plan2")||"null")}catch(e){return null}}
 
 function svcSnapshot(edits,tagOv,geos,readAt,respAll){
   let plan=null;try{plan=JSON.parse(localStorage.getItem("svc-plan2")||"null")}catch(e){}
@@ -2048,6 +2069,7 @@ async function svcPatchRemote(patch){
     const {data,error:readErr}=await svcSB.from("svc_shared_state").select("payload").eq("state_key",SVC_STATE_KEY).maybeSingle();
     if(readErr){console.error("SVC read before save",readErr);return}
     const payload={...(data?.payload||{}),...patch,updatedAt:new Date().toISOString()};
+    const lp=svcLocalPlan();if(svcPlanTime(lp)>svcPlanTime(payload.plan))payload.plan=lp;
     const {error}=await svcSB.from("svc_shared_state").upsert(
       {state_key:SVC_STATE_KEY,payload,updated_at:new Date().toISOString()},
       {onConflict:"state_key"}
@@ -2075,8 +2097,9 @@ function svcCacheRemote(p){
     if(p.readAt)localStorage.setItem("svc-read-at",JSON.stringify(p.readAt));
     if(p.respAll)localStorage.setItem(RESP_KEY,JSON.stringify(p.respAll));
     if(Object.prototype.hasOwnProperty.call(p,"plan")){
-      let oldPlan=null;try{oldPlan=JSON.parse(localStorage.getItem("svc-plan2")||"null")}catch(e){}
-      if(JSON.stringify(oldPlan)!==JSON.stringify(p.plan)){
+      const oldPlan=svcLocalPlan();
+      if(svcPlanTime(oldPlan)>svcPlanTime(p.plan)){const mine=oldPlan;setTimeout(()=>{svcApplyingRemote=false;svcSavePlanRemote(mine)},400)}
+      else if(JSON.stringify(oldPlan)!==JSON.stringify(p.plan)){
         if(p.plan==null)localStorage.removeItem("svc-plan2");
         else localStorage.setItem("svc-plan2",JSON.stringify(p.plan));
         window.dispatchEvent(new CustomEvent("svc-plan-remote",{detail:p.plan}));
