@@ -17,7 +17,7 @@ colors:{ink:'var(--ink)',muted:'var(--muted)',line:'var(--line)',accent:'var(--a
 html,body{background:var(--bg);color:var(--ink)}
 body{font-family:Onest,system-ui,sans-serif;min-height:100%;overflow-x:hidden}
 .aurora{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
-.aurora i{position:absolute;border-radius:50%;filter:blur(90px);opacity:.28}
+.aurora i{position:absolute;border-radius:50%;filter:none;opacity:.10}
 .aurora i:nth-child(1){width:46vw;height:46vw;left:-12vw;top:-14vw;background:#0e6d9c}
 .aurora i:nth-child(2){width:38vw;height:38vw;right:-10vw;top:18vh;background:#b86b12;opacity:.16}
 .aurora i:nth-child(3){width:50vw;height:40vw;left:30vw;bottom:-22vw;background:#123f7a;opacity:.3}
@@ -30,6 +30,13 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
 .spin{animation:spin 6s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
 .noscroll::-webkit-scrollbar{display:none}.noscroll{scrollbar-width:none}
 @media (prefers-reduced-motion:reduce){.sk,.spin{animation:none}}
+
+/* Otimização segura: mantém React/Framer originais */
+.glass{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+
+
+/* SVC FAST UI: preserva componentes e elimina custo visual de transições/blur */
+.glass{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
 </style>
 
 <div class="aurora"><i></i><i></i><i></i></div>
@@ -40,9 +47,18 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
 <script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/framer-motion@11.11.17/dist/framer-motion.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.umd.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script>
+/* Bibliotecas pesadas sob demanda: a tela abre primeiro. */
+const SVC_LIBS={};
+function svcLoadScript(key,url){
+  if(SVC_LIBS[key])return SVC_LIBS[key];
+  SVC_LIBS[key]=new Promise((resolve,reject)=>{
+    const e=document.createElement("script");e.src=url;e.async=true;e.onload=()=>resolve(true);e.onerror=()=>reject(new Error("Falha ao carregar "+key));document.head.appendChild(e);
+  });return SVC_LIBS[key];
+}
+const ensureXLSX=()=>window.XLSX?Promise.resolve(true):svcLoadScript("xlsx","https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js");
+const ensureJSPDF=()=>window.jspdf?Promise.resolve(true):svcLoadScript("jspdf","https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js");
+const ensureSupabaseLib=()=>window.supabase?Promise.resolve(true):svcLoadScript("supabase","https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2");
 /* ============ DADOS ============ */
 const CARRIERS={
   AL:{n:"ALC",bg:"#111111",fg:"#ffffff"},
@@ -125,9 +141,9 @@ const {useState,useEffect,useRef,useMemo}=React;
 const {motion,AnimatePresence,LayoutGroup}=Motion;
 const html=htm.bind(React.createElement);
 const spring={type:"spring",stiffness:420,damping:32};
-const tactile={whileHover:{scale:1.03},whileTap:{scale:.96},transition:spring};
-const stagger={hidden:{},show:{transition:{staggerChildren:.07,delayChildren:.05}}};
-const rise={hidden:{opacity:0,y:18,filter:"blur(6px)"},show:{opacity:1,y:0,filter:"blur(0px)",transition:{duration:.55,ease:[.22,1,.36,1]}}};
+const tactile={};
+const stagger={hidden:{},show:{transition:{staggerChildren:0,delayChildren:0}}};
+const rise={hidden:{opacity:1,y:0},show:{opacity:1,y:0,transition:{duration:0}}};
 
 function Swatch({k,size="sm"}){const c=CARRIERS[k];const cls=size==="lg"?"text-sm px-2.5 py-1 rounded-lg":"text-[10px] px-1.5 py-0.5 rounded-md";
   return html`<span class=${"font-mono font-bold inline-block "+cls} style=${{background:c.bg,color:c.fg,boxShadow:"inset 0 0 0 1px rgba(0,0,0,.25)"}}>${k}</span>`}
@@ -164,7 +180,7 @@ function Nav({cur,setCur,view,setView}){
 
 function Card({className="",children,title,right}){
   return html`<${motion.section} variants=${rise} class=${"glass rounded-3xl p-5 sm:p-6 min-w-0 "+className}
-      whileHover=${{y:-2}} transition=${{type:"spring",stiffness:300,damping:26}}>
+      transition=${{duration:0}}>
     ${title&&html`<div class="flex items-center justify-between gap-3 mb-4"><h2 class="text-[11px] uppercase tracking-[.16em] text-muted font-semibold">${title}</h2>${right}</div>`}
     ${children}
   </${motion.section}>`;
@@ -290,7 +306,7 @@ function ShareModal({cur,L,onClose}){
   const saveFile=async(name,data,url2)=>{try{const d=window.claude?.use?await window.claude.use("downloads"):null;
       if(d){try{await d.save({filename:name,data});setMsg("Arquivo salvo.")}catch(e){setMsg(e&&e.code==="declined"?"Download cancelado.":"Não deu para baixar aqui. Segure (ou clique com o botão direito) na imagem e escolha Salvar.")}return}}catch(e){}
     const a=document.createElement("a");a.href=url2;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url2),4000)};
-  const pdf=async()=>{if(!blob)return;if(!window.jspdf){setMsg("O gerador de PDF não carregou. Use Baixar PNG.");return}
+  const pdf=async()=>{if(!blob)return;try{await ensureJSPDF()}catch(e){setMsg("O gerador de PDF não carregou. Use Baixar PNG.");return}
     const doc=new window.jspdf.jsPDF({orientation:"landscape",unit:"mm",format:"a4"});
     const im=await new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.src=url});const c=document.createElement("canvas");c.width=im.naturalWidth;c.height=im.naturalHeight;
     const cx=c.getContext("2d");cx.fillStyle="#fff";cx.fillRect(0,0,c.width,c.height);cx.drawImage(im,0,0);
@@ -340,6 +356,24 @@ Responda SOMENTE com um JSON neste formato:
 {"titulo":"título do desenho, se houver","ciclo":"AM" | "PM" | "SD" | "AM0-CHP" | null,"vagas":{"1":"X","2":"DC","35":"PC"},"gaiolas":{"2":"A13_SD","35":"A14"},"duvidas":[11,46]}
 Em "vagas" coloque todas as vagas que aparecem no desenho. Em "duvidas" os números das vagas que você não conseguiu ler com certeza.`;
 
+function detectLayoutCycleFromDrawing(vagas){
+  const keys=Object.keys(LAYOUTS), scores=[];
+  for(const key of keys){
+    const ref=LAYOUTS[key].map||{};let hit=0,total=0,strong=0;
+    for(const [vv,kk] of Object.entries(vagas||{})){
+      const v=+vv,r=ref[v];if(!r||!kk||kk==="V")continue;
+      total++;
+      if(r===kk){hit++;if(kk!=="X")strong++}
+    }
+    scores.push({key,hit,total,strong,pct:total?hit/total:0});
+  }
+  scores.sort((a,b)=>b.pct-a.pct||b.strong-a.strong||b.hit-a.hit);
+  const best=scores[0],second=scores[1];
+  if(!best||best.total<20)return null;
+  const margin=second?best.pct-second.pct:best.pct;
+  return (best.pct>=0.62 && (margin>=0.06 || best.pct>=0.82))?best.key:null;
+}
+
 function distributeRoutes(map,tags){
   const res={...tags};const used=new Set(Object.values(res).filter(Boolean));const byK={};
   planGaiolas().forEach(r=>{if(!used.has(r.g)){(byK[r.k]=byK[r.k]||[]).push(r);used.add(r.g)}});
@@ -359,7 +393,14 @@ const LR_CLICKS=[[1,1,"vaga 1 (Rua 1, a primeira de cima)"],[1,31,"vaga 31 (Rua 
 const LR_PAL={X:[[255,0,0],[237,28,36],[230,40,40]],HW:[[0,32,96],[31,56,100],[0,51,102],[22,53,122]],OT:[[255,255,0],[255,242,0]],DC:[[0,255,255],[0,204,255],[0,176,240],[34,230,234]],
   CM:[[0,255,0],[146,208,80],[0,176,80],[34,224,36]],DL:[[84,130,53],[56,87,35],[112,173,71],[79,122,46]],KG:[[255,153,0],[255,192,0],[237,125,49],[243,146,0]],MS:[[128,128,128],[166,166,166],[118,118,118],[138,138,138]],
   EC:[[255,242,204],[252,228,214],[255,230,153],[246,226,192]],ME:[[248,203,173],[244,176,132],[244,199,173]],PY:[[191,143,0],[184,134,11]],PL:[[112,48,160],[123,94,167]],PC:[[255,255,255],[242,242,242]]};
-function lrImageData(img){const c=document.createElement("canvas");c.width=img.naturalWidth;c.height=img.naturalHeight;const g=c.getContext("2d");g.drawImage(img,0,0);return g.getImageData(0,0,c.width,c.height)}
+function lrImageData(img){
+  const MAXW=1600,MAXH=900;
+  const k=Math.min(1,MAXW/img.naturalWidth,MAXH/img.naturalHeight);
+  const c=document.createElement("canvas");
+  c.width=Math.max(1,Math.round(img.naturalWidth*k));c.height=Math.max(1,Math.round(img.naturalHeight*k));
+  const g=c.getContext("2d",{willReadFrequently:true});g.drawImage(img,0,0,c.width,c.height);
+  return g.getImageData(0,0,c.width,c.height)
+}
 function lrPx(D,x,y){x=Math.round(x);y=Math.round(y);if(x<0||y<0||x>=D.width||y>=D.height)return null;const i=(y*D.width+x)*4;return [D.data[i],D.data[i+1],D.data[i+2]]}
 const lrDark=p=>{const mx=Math.max(...p),mn=Math.min(...p);return mx<110&&mx-mn<70};
 function lrSeps(D,a,u,pp,d,s0,s1){const out=[];let st=-1;const ts=[];for(let t=s0;t<s1;t+=0.5)ts.push(t);
@@ -522,7 +563,12 @@ function ReadModal({cur,onClose,onApply}){
   const tplKey="svc-tpl-"+target;const tpl=useMemo(()=>{try{return JSON.parse(localStorage.getItem(tplKey)||"null")}catch(e){return null}},[tplKey,tplVer]);
   useEffect(()=>{if(!files[0]){setLi(null);return}let ok=true;const u=URL.createObjectURL(files[0]);const im=new Image();
     im.onload=()=>{if(!ok)return;try{setLi({url:u,w:im.naturalWidth,h:im.naturalHeight,D:lrImageData(im)})}catch(e){setErr("Não consegui abrir essa imagem.")}};im.src=u;return()=>{ok=false;URL.revokeObjectURL(u)}},[files[0]]);
-  const localRead=()=>{if(!li)return;setErr("");try{const r=lrReadAny(li.D);setRes({vagas:r.vagas,gaiolas:{},duvidas:r.duvidas,titulo:"Leitura automática local",ciclo:target,marks:r.marks,local:true})}catch(e){setRes(null);setErr(e?.code==="layout_shape"?"A imagem não está no formato do layout SVC completo. Envie o print inteiro, sem cortar as laterais.":"Leitura inválida — não apliquei nada. O desenho não alinhou com as vagas. Envie o print completo e reto.")}};
+  const localRead=()=>{if(!li)return;setErr("");try{
+    const r=lrReadAny(li.D);
+    const detected=detectLayoutCycleFromDrawing(r.vagas);
+    if(detected)setTarget(detected);
+    setRes({vagas:r.vagas,gaiolas:{},duvidas:r.duvidas,titulo:detected?"Ciclo "+detected+" reconhecido pelo desenho":"Leitura automática local",ciclo:detected||null,marks:r.marks,local:true})
+  }catch(e){setRes(null);setErr(e?.code==="layout_shape"?"A imagem não está no formato do layout SVC completo. Envie o print inteiro, sem cortar as laterais.":"Leitura inválida — não apliquei nada. O desenho não alinhou com as vagas. Envie o print completo e reto.")}};
   const imgClick=e=>{if(!calib||!li)return;const rc=e.currentTarget.getBoundingClientRect();const x=(e.clientX-rc.left)/rc.width*li.w,y=(e.clientY-rc.top)/rc.height*li.h;
     const step=LR_CLICKS[calib.length];const nc=[...calib,{r:step[0],v:step[1],first:calib.length%2===0,x,y}];
     if(nc.length<LR_CLICKS.length){setCalib(nc);return}
@@ -570,9 +616,9 @@ function ReadModal({cur,onClose,onApply}){
       </div>`}
       ${engine==="local"&&!res&&files.length>0&&html`<div class="flex flex-col gap-3">
         <div class="flex flex-wrap items-center gap-2 text-sm">
-          <label for="localTarget">Esse desenho é do ciclo</label>
-          <select id="localTarget" value=${target} onChange=${e=>{setTarget(e.target.value);setCalib(null)}} class="bg-white/5 border border-line rounded-lg px-2 py-1.5 text-sm text-ink">${Object.keys(LAYOUTS).map(k=>html`<option key=${k} value=${k}>${k}</option>`)}</select>
-          <span class="text-xs" style=${{color:"#5ee6b0"}}>leitura automática · sem IA · sem API</span>
+          <span class="font-semibold">Ciclo automático pelo desenho</span>
+          <span class="text-xs" style=${{color:"#5ee6b0"}}>AM · PM · SD · AM0-CHP</span>
+          <span class="text-xs text-muted">O app compara as vagas e transportadoras da imagem e abre o layout correspondente.</span>
         </div>
         ${false&&calib&&html`<div class="rounded-2xl px-3 py-2.5 text-sm font-semibold" style=${{background:"rgba(76,195,255,.12)",color:"var(--accent)"}}>
           ${calib.length+1}/10 · Clique no centro da ${LR_CLICKS[calib.length][2]}
@@ -687,7 +733,7 @@ function Plant({cur,L,filter,sel,onPick,onEdit,onGeo,onTag,onZero,onApplyRead,on
 
     <${AnimatePresence}>${edit&&html`<${motion.div} initial=${{opacity:0,height:0}} animate=${{opacity:1,height:"auto"}} exit=${{opacity:0,height:0}} class="overflow-hidden">
       <div class="mb-3 flex flex-wrap items-center gap-3">
-        <${LayoutGroup} id="modes"><div class="inline-flex p-1 rounded-full" style=${{background:"rgba(255,255,255,.06)"}}>${seg("swap","Trocar transportadora")}${seg("move","Mover no desenho")}${seg("tag","Gaiola/rota")}</div></${LayoutGroup}>
+        <${LayoutGroup} id="modes"><div class="inline-flex p-1 rounded-full" style=${{background:"rgba(255,255,255,.06)"}}>${seg("swap","Trocar transportadora")}${seg("move","Mover no desenho")}${seg("tag","Escrever rota/gaiola")}</div></${LayoutGroup}>
 
         <span class="text-muted text-xs">${mode==="tag"?"Toque numa vaga e digite o nome da gaiola/rota que fica em cima dela (ex.: VD2_CHP). Enter salva; deixe vazio para apagar.":mode==="swap"?"Arraste a peça até outra vaga: ela pega o número de lá e mantém a transportadora. Se tiver alguém, os dois trocam.":"Arraste qualquer peça, esteira, mezanino, rampa ou a faixa da expedição. Para mover a coluna inteira, arraste a etiqueta RUA."}</span>
       </div>
@@ -978,12 +1024,11 @@ function gSacas(r){if(!r.children||!r.children.length)return "";const ids=(r.sac
 const byOndaVaga=(a,b)=>(a.onda||99)-(b.onda||99)||(a.vaga||999)-(b.vaga||999)||String(gName(a)).localeCompare(gName(b),"pt",{numeric:true});
 // rotas sem gaiola marcada no layout: interpreta o desenho e coloca cada rota numa vaga livre da transportadora
 function autoPlace(items,L){
-  const used=new Set(items.filter(r=>r.vaga).map(r=>r.vaga));Object.entries(L.tags||{}).forEach(([v,t])=>{if(t)used.add(+v)});
-  const order=v=>rua(v)===5?1000-v:v;const byK={};items.forEach(r=>{if(!r.vaga&&r.k)(byK[r.k]=byK[r.k]||[]).push(r)});
-  Object.keys(byK).forEach(k=>{const free=Object.keys(L.map).map(Number).filter(v=>L.map[v]===k&&!used.has(v)).sort((a,b)=>rua(a)-rua(b)||order(a)-order(b));
-    const cnt={};Object.keys(L.map).forEach(v=>{if(L.map[v]===k)cnt[rua(+v)]=(cnt[rua(+v)]||0)+1});const main=+Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a])[0]||null;
-    byK[k].sort(byOndaVaga).forEach((r,i)=>{if(free[i]){r.vaga=free[i];r.auto=true;r.rua=rua(free[i])}else{r.rua=main}})});
-  return items}
+  // SEGURANÇA OPERACIONAL: nunca adivinhar rua/vaga pela transportadora.
+  // A Guiada só usa uma posição quando a rota/gaiola foi localizada de forma exata no layout.
+  // Sem correspondência exata, permanece "Sem rua definida".
+  return items.map(r=>({...r,rua:r.vaga?rua(+r.vaga):null,auto:false}))
+}
 function buildRuas(items){
   return [1,2,3,4,5,null].map(n=>{const list=items.filter(r=>(r.rua??null)===n);if(!list.length)return null;
     const m={};list.forEach(r=>{const k=r.k||r.name;(m[k]=m[k]||[]).push(r)});
@@ -1062,7 +1107,7 @@ function GuiadaModal({cur,ciclo,items,onClose}){
   const base=`guiada-${ciclo}-${new Date().toLocaleDateString("pt-BR").replace(/\//g,"-")}`;
   const text=guiadaText(cur,ciclo,items);const autoN=items.filter(r=>r.auto).length;
   const copyText=async()=>{try{await navigator.clipboard.writeText(text);setMsg("Texto da guiada copiado. Cole no grupo.")}catch(e){setMsg("Não deu para copiar o texto aqui.")}};
-  const pdfAll=async()=>{if(!blobs)return;if(!window.jspdf){setMsg("O gerador de PDF não carregou.");return}
+  const pdfAll=async()=>{if(!blobs)return;try{await ensureJSPDF()}catch(e){setMsg("O gerador de PDF não carregou.");return}
     const doc=new window.jspdf.jsPDF({orientation:"portrait",unit:"px",format:[1080,1920]});
     for(let i=0;i<blobs.length;i++){const im=await new Promise(r=>{const m=new Image();m.onload=()=>r(m);m.src=urls[i]});const c=document.createElement("canvas");c.width=1080;c.height=1920;c.getContext("2d").drawImage(im,0,0);
       if(i)doc.addPage([1080,1920],"portrait");doc.addImage(c.toDataURL("image/jpeg",.88),"JPEG",0,0,1080,1920)}
@@ -1126,9 +1171,15 @@ function BuildBar({cur,onZeroPlan,hasPlan,onApplyRead,onDistribute,goLayout,onGu
 }
 function PlanView({cur,L,setCur,onZero,onApplyRead,onDistribute,goLayout}){
   const [src,setSrc]=useState(()=>{try{const s=JSON.parse(localStorage.getItem("svc-plan2")||"null");if(s&&s.rows)return s;if(s&&s.empty)return null}catch(e){}return parseDefault()});
+  useEffect(()=>{
+    const fn=e=>{const v=e.detail;if(v&&v.rows)setSrc(v);else if(v&&v.empty)setSrc(null);else if(v==null)setSrc(parseDefault())};
+    window.addEventListener("svc-plan-remote",fn);
+    return()=>window.removeEventListener("svc-plan-remote",fn);
+  },[]);
   const zeroPlan=()=>{
     // Zera o planejamento e, no mesmo comando, limpa o layout do ciclo atual.
     try{localStorage.setItem("svc-plan2",JSON.stringify({empty:true}))}catch(e){}
+    svcSavePlanRemote({empty:true});
     setSrc(null);setErr("");
     if(onZero)onZero();
   };
@@ -1136,13 +1187,13 @@ function PlanView({cur,L,setCur,onZero,onApplyRead,onDistribute,goLayout}){
   const rows=src?src.rows:[];const headers=src?src.headers:[];const m=src?src.map:{};
   const ciclo=src?detectCiclo(src.title||"",rows,m):null;
   CICLO_TAG=src?cicloTag(rows,m):"";
-  const save=obj=>{setSrc(obj);try{localStorage.setItem("svc-plan2",JSON.stringify(obj))}catch(e){}};
+  const save=obj=>{setSrc(obj);try{localStorage.setItem("svc-plan2",JSON.stringify(obj))}catch(e){}svcSavePlanRemote(obj)};
   const load=(aoa,name)=>{const t=fromAOA(aoa);if(!t.rows.length){setErr("Não encontrei linhas nessa planilha.");return}
     const gm=guessMap(t.headers);setErr((gm.rota||gm.gaiola)&&gm.transp?"":"Não achei sozinho as colunas de rota/gaiola e transportadora. Escolha abaixo quais são.");
     const obj={...t,name,at:new Date().toLocaleString("pt-BR"),map:gm};save(obj);setRuaSel(0)};
   const withSteps=fn=>{setErr("");setPaste(false);setBusy(true);setTimeout(()=>{try{fn()}finally{setBusy(false)}},850)};
   useEffect(()=>{if(ciclo&&ciclo!==cur)setCur(ciclo)},[src]);
-  const onFile=f=>{if(!f)return;const isTxt=/\.(csv|txt)$/i.test(f.name);const rd=new FileReader();
+  const onFile=async f=>{if(!f)return;try{await ensureXLSX()}catch(e){setErr("Não consegui carregar o leitor de Excel.");return}const isTxt=/\.(csv|txt)$/i.test(f.name);const rd=new FileReader();
     rd.onload=e=>withSteps(()=>{try{const wb=isTxt?XLSX.read(e.target.result,{type:"string",raw:true}):XLSX.read(e.target.result,{type:"array"});
       let best=null;wb.SheetNames.forEach(n=>{const aoa=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:false,defval:""});const t=fromAOA(aoa);const g=guessMap(t.headers);
         const sc=(g.rota?2:0)+(g.gaiola?2:0)+(g.onda?1:0)+t.rows.length/1e6;if(!best||sc>best.sc)best={aoa,sc}});
@@ -1150,13 +1201,18 @@ function PlanView({cur,L,setCur,onZero,onApplyRead,onDistribute,goLayout}){
     isTxt?rd.readAsText(f,"utf-8"):rd.readAsArrayBuffer(f)};
   const onPaste=t=>{const lines=t.replace(/\r/g,"").split("\n").filter(l=>l.trim());if(lines.length<2){setErr("Cole o cabeçalho e pelo menos uma linha.");return}
     const sep=lines.some(l=>l.includes("\t"))?"\t":lines[1].includes(";")?";":",";withSteps(()=>load(lines.map(l=>l.split(sep)),"Planejamento colado"))};
-  const reset=()=>{try{localStorage.removeItem("svc-plan2")}catch(e){}setErr("");setSrc(parseDefault())};
+  const reset=()=>{try{localStorage.removeItem("svc-plan2")}catch(e){}svcSavePlanRemote(null);setErr("");setSrc(parseDefault())};
 
   const routes=useMemo(()=>src&&(m.rota||m.gaiola)&&m.transp?aggregate(rows,m):[],[src]);
   const ondas=m.onda?[...new Set([1,2,3,4,...routes.map(r=>r.onda).filter(x=>x!=null)])].sort((a,b)=>a-b):[];
   if(!m.onda||routes.some(r=>r.onda==null))ondas.push("?");
   const byRua={1:{},2:{},3:{},4:{},5:{}};const semRua={};
-  const vagaOf={};Object.entries(L.tags||{}).forEach(([v,t])=>{if(!t||L.map[v]==="V")return;const a=normTxt(t),b=normTxt(shortTag(t));if(!vagaOf[a])vagaOf[a]=+v;if(!vagaOf[b])vagaOf[b]=+v});
+  const routeKey=x=>normTxt(String(x||"")).replace(/[\s-]+/g,"_").replace(/_+/g,"_");
+  const vagaOf={};Object.entries(L.tags||{}).forEach(([v,t])=>{
+    if(!t||L.map[v]==="V")return;
+    const keys=[t,shortTag(t)].map(routeKey).filter(Boolean);
+    keys.forEach(k=>{if(!vagaOf[k])vagaOf[k]=+v})
+  });
   // Reforço para a GUIADA: mesmo quando o mapeamento automático não marcou ONDA/PARADAS,
   // procura esses campos diretamente no planejamento e cruza por GAIOLA/ROTA.
   const hdrOnda=m.onda||headers.find(h=>/ONDA|WAVE/i.test(normTxt(h)))||headers.find(h=>rows.slice(0,80).filter(r=>/ONDA\s*\d+|SEM ONDA/i.test(String(r[h]||""))).length>=3)||null;
@@ -1179,10 +1235,19 @@ function PlanView({cur,L,setCur,onZero,onApplyRead,onDistribute,goLayout}){
     if(!inf)return r;
     return {...r,onda:inf.onda??r.onda,parada:(inf.parada!==""&&inf.parada!=null)?inf.parada:r.parada};
   };
-  const placed=routes.map(r0=>{r0=enrichPlan(r0);const vv=vagaOf[normTxt(r0.gaiola)]||vagaOf[normTxt(r0.rota)]||vagaOf[normTxt(gName(r0))];return vv?{...r0,vaga:vv,ruasFix:[rua(vv)]}:r0});
-  placed.forEach(r=>{const rs=r.ruasFix||(r.k?carrierRuas(L,r.k):[]);const g=r.k||normTxt(r.transpRaw)||"SEM TRANSPORTADORA";
+  const placed=routes.map(r0=>{
+    r0=enrichPlan(r0);
+    const keys=[r0.gaiola,r0.rota,gName(r0)].map(routeKey).filter(Boolean);
+    let vv=null;for(const k of keys){if(vagaOf[k]){vv=vagaOf[k];break}}
+    return vv?{...r0,vaga:vv,ruasFix:[rua(vv)],matchLayout:true}:{...r0,vaga:null,ruasFix:[],matchLayout:false}
+  });
+  placed.forEach(r=>{
+    // Rua só pode vir de vaga/gaiola/rota encontrada no layout. Não usar a rua da transportadora como chute.
+    const rs=r.vaga?[rua(+r.vaga)]:(r.ruasFix&&r.ruasFix.length?r.ruasFix:[]);
+    const g=r.k||normTxt(r.transpRaw)||"SEM TRANSPORTADORA";
     if(!rs.length){(semRua[g]=semRua[g]||[]).push(r);return}
-    rs.forEach(n=>{if(byRua[n])(byRua[n][g]=byRua[n][g]||[]).push(r)})});
+    rs.forEach(n=>{if(byRua[n])(byRua[n][g]=byRua[n][g]||[]).push(r)})
+  });
   const ruaCount=n=>Object.values(byRua[n]).reduce((a,l)=>a+l.length,0);
   const vagasTxt=(n,k)=>ranges(Object.keys(L.map).map(Number).filter(v=>rua(v)===n&&L.map[v]===k).sort((a,b)=>a-b));
   const ruasToShow=ruaSel?[ruaSel]:[1,2,3,4,5];
@@ -1387,7 +1452,13 @@ const AMX=(()=>{
   function compact(s){const keep=[...new Set(Object.values(s.map).filter(i=>i>=0))].sort((a,b)=>a-b);const pos={};keep.forEach((c,i)=>pos[c]=i);
     const map={};for(const k in s.map)map[k]=s.map[k]>=0?pos[s.map[k]]:-1;return {id:s.id,name:s.name,ciclo:s.ciclo,txt:s.txt,headers:keep.map(c=>s.headers[c]),rows:s.rows.map(r=>keep.map(c=>r[c])),map}}
   const save=()=>IDB.set("sources",sources.map(compact));
-  async function load(){const s=await IDB.get("sources");sources=Array.isArray(s)?s:[];rebuild();return sources}
+  let loaded=false,loadPromise=null;
+  async function load(){
+    if(loaded)return sources;
+    if(loadPromise)return loadPromise;
+    loadPromise=(async()=>{const s=await IDB.get("sources");sources=Array.isArray(s)?s:[];rebuild();loaded=true;return sources})();
+    try{return await loadPromise}finally{loadPromise=null}
+  }
   /* o planejamento carregado na aba Planejamento entra como fonte de rotas */
   function systemPlan(){let src=null;try{src=JSON.parse(localStorage.getItem("svc-plan2")||"null")}catch(e){}if(src&&src.empty)return [];if(!src||!src.rows)src=parseDefault();
     if(!src||!src.map)return [];const m=src.map;if(!(m.rota||m.gaiola)||!m.transp)return [];
@@ -1401,13 +1472,13 @@ const AMX=(()=>{
   function clearSources(){sources=[];rebuild();save()}
   /* aduana */
   const AF=[{k:"id",syn:["shipment id","id do envio","id envio","id do pacote","id pacote","pacote","shipment","id"]},{k:"rota",syn:["id da rota","id rota","rota","route id","route"]},
-    {k:"placa",syn:["placa","plate","veiculo"]},{k:"data",syn:["data auditoria","data","date","hora"]},{k:"estado",syn:["estado","status","situacao","resultado"]},{k:"rep",syn:["rep auditoria","rep","auditor","responsavel","usuario"]}];
+    {k:"placa",syn:["placa","plate","veiculo"]},{k:"motorista",syn:["motorista","nome motorista","driver","condutor"]},{k:"data",syn:["data auditoria","data","date","hora"]},{k:"estado",syn:["estado","status","situacao","resultado"]},{k:"rep",syn:["rep auditoria","rep","auditor","responsavel","usuario"]}];
   function splitLine(line,d){if(d!==",")return line.split(d).map(s=>s.trim().replace(/^"|"$/g,""));const out=[];let cur="",q=false;
     for(const ch of line){if(ch==='"'){q=!q;continue}if(ch===","&&!q){out.push(cur.trim());cur=""}else cur+=ch}out.push(cur.trim());return out}
   function parseAduanaAoa(aoa){if(!aoa.length)return [];const hr=findHeaderRow(aoa,AF);const head=(aoa[hr]||[]).map(cell);
     const hasHead=head.some(c=>/shipment|id|envio|pacote|rota|estado/i.test(c))&&!head.some(c=>/^\d{9,}$/.test(c));
-    if(hasHead){const m=detectMap(head,AF);if(m.id>=0)return aoa.slice(hr+1).map(r=>{const g=k=>m[k]>=0?cell(r[m[k]]):"";return {id:normId(g("id")),rota:g("rota"),placa:g("placa"),data:g("data"),estado:g("estado")||"Sem estado",rep:g("rep")}}).filter(x=>x.id)}
-    const out=[];aoa.forEach(r=>{const mm=r.join(" ").match(/\b\d{9,13}\b/g);if(mm)mm.forEach(id=>out.push({id,rota:"",placa:"",data:"",estado:"A mais",rep:""}))});return out}
+    if(hasHead){const m=detectMap(head,AF);if(m.id>=0)return aoa.slice(hr+1).map(r=>{const g=k=>m[k]>=0?cell(r[m[k]]):"";return {id:normId(g("id")),rota:g("rota"),placa:g("placa"),motorista:g("motorista"),data:g("data"),estado:g("estado")||"Sem estado",rep:g("rep")}}).filter(x=>x.id)}
+    const out=[];aoa.forEach(r=>{const mm=r.join(" ").match(/\b\d{9,13}\b/g);if(mm)mm.forEach(id=>out.push({id,rota:"",placa:"",motorista:"",data:"",estado:"A mais",rep:""}))});return out}
   function parseAduanaText(t){const lines=String(t||"").split(/\r?\n/).filter(l=>l.trim());if(!lines.length)return [];const f=lines[0];
     const d=f.includes("\t")?"\t":(f.split(";").length>f.split(",").length?";":(f.includes(",")?",":"\t"));return parseAduanaAoa(lines.map(l=>splitLine(l,d)))}
   const isAmais=e=>/mais|sobr|extra|exced|surplus|over/i.test(e);
@@ -1457,7 +1528,7 @@ function MiniPlant({L,vaga,k,hl}){
       ${[1,2,3,4,5].map(n=>{const t=G.tags[n];const on=hr===n;return html`<div key=${"t"+n} class="absolute z-10 font-display text-[10px] px-1.5 py-0.5 rounded-full whitespace-nowrap" style=${{left:t.x,top:t.y,background:on?"var(--amber)":"var(--accent)",color:"#04121b",opacity:hr&&!on?.35:1}}>RUA ${n}</div>`})}
       ${Object.keys(L.map).map(Number).map(v=>{const kk=L.map[v];const c=CARRIERS[kk]||CARRIERS.V;const p=G.slots[v];const hit=v===vaga;const same=hl?hl.has(v):hk&&kk===hk;
         return html`<${motion.div} key=${v} class="absolute rounded-lg flex flex-col items-center justify-center leading-none"
-          animate=${hit?{scale:[1,1.18,1]}:{scale:1}} transition=${hit?{repeat:Infinity,duration:1.4,ease:"easeInOut"}:{}}
+          animate=${{scale:1}} transition=${{duration:0}}
           style=${{left:p.x,top:p.y,width:SZ,height:SZ,background:c.bg,color:c.fg,opacity:hit||same?1:.13,zIndex:hit?5:1,
             boxShadow:hit?"0 0 0 3px var(--bg),0 0 0 6px var(--amber),0 0 28px rgba(255,181,71,.8)":same?"0 0 0 2px rgba(76,195,255,.7)":"inset 0 0 0 1px rgba(0,0,0,.3)"}}>
           <b class="font-mono text-[10px] opacity-85">${v}</b><span class="font-display text-[11px] mt-0.5">${kk}</span>
@@ -1537,11 +1608,11 @@ function AMaisView({layoutOf,goVaga}){
   const applyAduana=(rows)=>{setAduana(rows);const est=[...new Set(rows.map(a=>a.estado))];const am=est.filter(AMX.isAmais);setEstSel(new Set(am.length?am:est))};
   useEffect(()=>{AMX.setExtra(AMX.systemPlan());AMX.load().then(()=>{setLoading(false);bump();const t=AMX.lsGet("adText");if(t)applyAduana(AMX.parseAduanaText(t))})},[]);
   const copy=(t,ok)=>{try{navigator.clipboard.writeText(t).then(()=>setMsg(ok||"Copiado. Cole no Excel.")).catch(()=>setMsg("Não deu para copiar aqui."))}catch(e){setMsg("Não deu para copiar aqui.")}};
-  const mkConn=(m,from,p)=>{p=p||amPlace(m,layoutOf);const op=from?amOrigin(from,layoutOf):null;return {fromResp:op?respNames(op.resp):"",fromVaga:op&&op.vaga||"",resp:respNames(amResp(p)),id:m.id,t:Date.now(),from:from||"",ciclo:m.ciclo,rota:m.rota,gaiola:AMX.destLabel(m),sigla:m.sigla,transp:m.transp,onda:m.onda,parada:m.parada,lk:p&&p.lk||"",vaga:p&&p.vaga||"",rua:amRuaTxt(p)}};
-  const connect=(m,from,p)=>{const ex=conns.find(c=>c.id===m.id&&c.rota===m.rota&&c.ciclo===m.ciclo);
+  const mkConn=(m,from,p,a)=>{p=p||amPlace(m,layoutOf);const op=from?amOrigin(from,layoutOf):null;return {fromResp:(a&&a.rep)|| (op?respNames(op.resp):""),fromVaga:op&&op.vaga||"",motorista:(a&&a.motorista)||"",placa:(a&&a.placa)||"",dataAduana:(a&&a.data)||"",resp:respNames(amResp(p)),id:m.id,t:Date.now(),from:from||"",ciclo:m.ciclo,rota:m.rota,gaiola:AMX.destLabel(m),sigla:m.sigla,transp:m.transp,onda:m.onda,parada:m.parada,lk:p&&p.lk||"",vaga:p&&p.vaga||"",rua:amRuaTxt(p)}};
+  const connect=(m,from,p,a)=>{const ex=conns.find(c=>c.id===m.id&&c.rota===m.rota&&c.ciclo===m.ciclo);
     if(ex){setConns(conns.filter(c=>c!==ex));setMsg("Conexão desfeita");return}
     p=p||amPlace(m,layoutOf);
-    const op=from?amOrigin(from,layoutOf):null;setConns([...conns.filter(c=>c.id!==m.id),{fromResp:op?respNames(op.resp):"",fromVaga:op&&op.vaga||"",resp:respNames(amResp(p)),id:m.id,t:Date.now(),from:from||"",ciclo:m.ciclo,rota:m.rota,gaiola:AMX.destLabel(m),sigla:m.sigla,transp:m.transp,onda:m.onda,parada:m.parada,lk:p&&p.lk||"",vaga:p&&p.vaga||"",rua:amRuaTxt(p)}]);
+    const op=from?amOrigin(from,layoutOf):null;setConns([...conns.filter(c=>c.id!==m.id),{fromResp:(a&&a.rep)||(op?respNames(op.resp):""),fromVaga:op&&op.vaga||"",motorista:(a&&a.motorista)||"",placa:(a&&a.placa)||"",dataAduana:(a&&a.data)||"",resp:respNames(amResp(p)),id:m.id,t:Date.now(),from:from||"",ciclo:m.ciclo,rota:m.rota,gaiola:AMX.destLabel(m),sigla:m.sigla,transp:m.transp,onda:m.onda,parada:m.parada,lk:p&&p.lk||"",vaga:p&&p.vaga||"",rua:amRuaTxt(p)}]);
     setMsg(`${m.id} conectado a ${AMX.destLabel(m)}${p&&p.vaga?" · vaga "+p.vaga:""}`)};
   const search=text=>{const ids=AMX.extractIds(text);if(!ids.length)return;setQ({ids});
     const o=orig.trim().toUpperCase();
@@ -1549,8 +1620,9 @@ function AMaisView({layoutOf,goVaga}){
     const add=[];ids.forEach(id=>{const m=AMX.lookup(id).matches.find(x=>!x.semRota);if(!m)return;const ex=conns.find(c=>c.id===m.id);if(!ex||(o&&ex.from!==o))add.push(mkConn(m,o||(ex&&ex.from)||""))});
     if(add.length){setConns([...conns.filter(c=>!add.some(a=>a.id===c.id)),...add]);setMsg(add.length===1?`${add[0].id} conectado a ${add[0].gaiola}${add[0].vaga?" · vaga "+add[0].vaga:""}`:`${add.length} pacotes conectados`)}
     const h=[...hist.filter(x=>!ids.includes(x.id)),...ids.map(id=>({id,t:Date.now()}))].slice(-40);setHist(h);AMX.lsSet("hist",h)};
-  const importFiles=async list=>{const fs=[...list];if(!fs.length)return;if(typeof XLSX==="undefined"){setMsg("O leitor de planilhas não carregou.");return}
-    setBusy(true);const add=[];for(const f of fs)add.push(...await AMX.readFile(f));setBusy(false);
+  const importFiles=async list=>{const fs=[...list];if(!fs.length)return;
+    setBusy(true);try{await ensureXLSX()}catch(e){setBusy(false);setMsg("O leitor de planilhas não carregou.");return}
+    const add=[];for(const f of fs)add.push(...await AMX.readFile(f));setBusy(false);
     if(!add.length){setMsg("Nenhuma aba com ID do pacote ou rota foi encontrada.");return}
     AMX.addSources(add,true);bump();setMsg(`${add.length} aba${add.length>1?"s":""} lida${add.length>1?"s":""} · ${[...new Set(add.map(s=>s.ciclo||AMX.SEMC))].sort(AMX.cycSort).join(", ")}`)};
   const readPlanText=()=>{const lines=planTxt.split(/\r?\n/);const add=AMX.planSourcesFromLines(lines,"Planejamento colado","");
@@ -1569,7 +1641,7 @@ function AMaisView({layoutOf,goVaga}){
   const header=html`<${motion.section} variants=${rise} class="col-span-2 md:col-span-12 flex flex-wrap items-end justify-between gap-3">
     <div><div class="text-[11px] uppercase tracking-[.16em] text-muted font-semibold">Localizador</div><h1 class="font-display text-3xl sm:text-5xl tracking-tight mt-1">A mais</h1></div>
     <${LayoutGroup} id="amtabs"><div class="inline-flex flex-wrap gap-1 p-1 rounded-full" style=${{background:"rgba(255,255,255,.05)"}}>
-      ${segBtn("localizar","Localizar")}${segBtn("aduana","Aduana",pend)}${segBtn("conexoes","Conexões",conns.length)}${segBtn("bases","Bases")}
+      ${segBtn("localizar","Localizar")}${segBtn("aduana","Aduana",pend)}${segBtn("conexoes","Conexões",conns.length)}${segBtn("relatorio","Relatório")}${segBtn("bases","Bases")}
     </div></${LayoutGroup}></${motion.section}>`;
 
   const baseCard=html`<${Card} className="col-span-2 md:col-span-4" title="Base carregada" right=${html`<button type="button" onClick=${()=>setTab("bases")} class="text-xs text-accent font-medium">Gerenciar</button>`}>
@@ -1661,7 +1733,7 @@ function AMaisView({layoutOf,goVaga}){
           if(/\.xlsx?$/i.test(f.name)){const wb=XLSX.read(await f.arrayBuffer(),{type:"array"});const aoa=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,defval:"",raw:false});const t=aoa.map(r=>r.join("\t")).join("\n");setAdText(t);AMX.lsSet("adText",t);applyAduana(AMX.parseAduanaAoa(aoa))}
           else{const t=await f.text();setAdText(t);AMX.lsSet("adText",t);applyAduana(AMX.parseAduanaText(t))}}}/>
         <label for="amAdText" class="sr-only">Dados da aduana</label>
-        <textarea id="amAdText" value=${adText} onInput=${e=>setAdText(e.target.value)} spellcheck="false" rows="8" placeholder="Copie a tabela da aduana (Shipment ID, Placa, Data auditoria, ID da rota, Estado, Rep auditoria) e cole aqui. Também aceita só a lista de IDs."
+        <textarea id="amAdText" value=${adText} onInput=${e=>setAdText(e.target.value)} spellcheck="false" rows="8" placeholder="Copie a tabela da aduana (Shipment ID, Placa, Motorista, Data auditoria, ID da rota, Estado, Rep auditoria) e cole aqui. Também aceita só a lista de IDs."
           class="w-full bg-white/5 border border-line rounded-2xl p-3 font-mono text-xs outline-none focus:border-[var(--accent)]"></textarea>
         <div class="flex flex-wrap gap-2 mt-3">
           <${motion.button} ...${tactile} type="button" onClick=${()=>{const rows=AMX.parseAduanaText(adText);AMX.lsSet("adText",adText);if(!rows.length){setMsg("Não achei IDs de pacote no texto colado.");return}applyAduana(rows);setMsg(rows.length+" linhas lidas da aduana")}} class=${amBtn} style=${{background:"var(--amber)",color:"#1b1300"}}>Analisar a mais</${motion.button}>
@@ -1678,7 +1750,7 @@ function AMaisView({layoutOf,goVaga}){
       <${Card} className="col-span-2 md:col-span-12" title="Pacotes a mais e rota correta" right=${html`<div class="flex flex-wrap items-center gap-2">
           <select value=${adGroup} onChange=${e=>setAdGroup(e.target.value)} aria-label="Agrupar" class="bg-white/5 border border-line rounded-lg px-2 py-1.5 text-xs text-ink"><option value="dest">Por destino</option><option value="orig">Por rota auditada</option><option value="none">Lista</option></select>
           <select value=${adSt} onChange=${e=>setAdSt(e.target.value)} aria-label="Situação" class="bg-white/5 border border-line rounded-lg px-2 py-1.5 text-xs text-ink"><option value="">Todas as situações</option><option value="ok">Rota correta</option><option value="same">Já é desta rota</option><option value="sr">Outro ciclo s/ rota</option><option value="nf">Não encontrado</option><option value="cx">Conectados</option></select>
-          <${motion.button} ...${tactile} type="button" onClick=${()=>{const add=[];adShown.forEach(({a,r})=>{if(r.st==="ok"&&!r.connected){const m=r.best,p=amPlace(m,layoutOf);add.push({id:m.id,t:Date.now(),from:a.rota,ciclo:m.ciclo,rota:m.rota,gaiola:AMX.destLabel(m),sigla:m.sigla,transp:m.transp,onda:m.onda,parada:m.parada,lk:p&&p.lk||"",vaga:p&&p.vaga||"",rua:amRuaTxt(p)})}});setConns([...conns.filter(c=>!add.some(x=>x.id===c.id)),...add]);setMsg(add.length?add.length+" conectados à rota certa":"Nenhum pendente")}} class=${amBtn} style=${{background:"var(--amber)",color:"#1b1300"}}>Conectar todos</${motion.button}>
+          <${motion.button} ...${tactile} type="button" onClick=${()=>{const add=[];adShown.forEach(({a,r})=>{if(r.st==="ok"&&!r.connected){const m=r.best,p=amPlace(m,layoutOf);add.push({id:m.id,t:Date.now(),from:a.rota,fromResp:a.rep||"",motorista:a.motorista||"",placa:a.placa||"",dataAduana:a.data||"",ciclo:m.ciclo,rota:m.rota,gaiola:AMX.destLabel(m),sigla:m.sigla,transp:m.transp,onda:m.onda,parada:m.parada,lk:p&&p.lk||"",vaga:p&&p.vaga||"",rua:amRuaTxt(p)})}});setConns([...conns.filter(c=>!add.some(x=>x.id===c.id)),...add]);setMsg(add.length?add.length+" conectados à rota certa":"Nenhum pendente")}} class=${amBtn} style=${{background:"var(--amber)",color:"#1b1300"}}>Conectar todos</${motion.button}>
           <${motion.button} ...${tactile} type="button" onClick=${()=>{const t=table();if(!t.length)return setMsg("Nada para copiar");copy(tsv(t),t.length+" linhas copiadas. Cole no Excel.")}} class=${amBtn+" border border-white/20"}>Copiar</${motion.button}></div>`}>
         <div class="overflow-x-auto -mx-1"><table class="w-full min-w-[860px] text-sm">
           <thead><tr class="text-left text-[11px] uppercase tracking-[.14em] text-muted"><th class="py-2 px-2 font-semibold">ID do pacote</th><th class="py-2 px-2 font-semibold">Estava em</th><th class="py-2 px-2 font-semibold">Rota correta</th><th class="py-2 px-2 font-semibold">Vaga · Rua</th><th class="py-2 px-2 font-semibold">Ciclo</th><th class="py-2 px-2 font-semibold">Situação</th><th></th></tr></thead>
@@ -1694,27 +1766,74 @@ function AMaisView({layoutOf,goVaga}){
                   <td class="py-2 px-2 whitespace-nowrap">${p?(p.vaga?html`<span class="font-mono font-bold px-1.5 py-0.5 rounded" style=${{background:"var(--accent)",color:"#04121b"}}>V${p.vaga}</span> Rua ${p.rua}`:amRuaTxt(p)):"—"}${p&&amResp(p).length?html`<div class="text-xs font-semibold mt-0.5" style=${{color:"var(--accent)"}}>${respNames(amResp(p))}</div>`:""}</td>
                   <td class="py-2 px-2">${m?html`<span class="font-mono text-[11px] px-1.5 py-0.5 rounded-md bg-white/10">${m.ciclo}</span>`:"—"}</td>
                   <td class="py-2 px-2"><${AmTag} st=${r.st}/></td>
-                  <td class="py-2 px-2 text-right">${r.st==="ok"&&html`<${motion.button} ...${tactile} type="button" onClick=${()=>connect(m,a.rota,p)} class="text-xs font-semibold px-3 py-1.5 rounded-full" style=${r.connected?{background:"rgba(52,211,153,.14)",color:"#5ee6b0"}:{background:"var(--amber)",color:"#1b1300"}}>${r.connected?"✓ Conectado":"Conectar"}</${motion.button}>`}</td></tr>`})}`})}
+                  <td class="py-2 px-2 text-right">${r.st==="ok"&&html`<${motion.button} ...${tactile} type="button" onClick=${()=>connect(m,a.rota,p,a)} class="text-xs font-semibold px-3 py-1.5 rounded-full" style=${r.connected?{background:"rgba(52,211,153,.14)",color:"#5ee6b0"}:{background:"var(--amber)",color:"#1b1300"}}>${r.connected?"✓ Conectado":"Conectar"}</${motion.button}>`}</td></tr>`})}`})}
             ${!adShown.length&&html`<tr><td colspan="7" class="py-6 px-2 text-muted">${aduana.length?"Nenhuma linha com esse filtro.":"Cole a tabela da aduana e toque em Analisar a mais."}</td></tr>`}</tbody></table></div>
+      </${Card}>`;
+  } else if(tab==="relatorio"){
+    const rr=adRows.filter(({a,r})=>AMX.isAmais(a.estado)&&r.st==="ok").map(({a,r})=>{
+      const m=r.best||r.matches[0],p=m?amPlace(m,layoutOf):null,op=a.rota?amOrigin(a.rota,layoutOf):null;
+      return {id:a.id,data:a.data||"",rotaAtual:a.rota||"",rotaCorreta:m&&m.rota||"",gaiola:m?AMX.destLabel(m):"",auditor:a.rep||(op?respNames(op.resp):"")||"",motorista:a.motorista||"",placa:a.placa||"",transp:m?(CARRIERS[m.sigla]?.n||m.transp||""):"",rua:p?amRuaTxt(p):"",vaga:p&&p.vaga||"",onda:m&&m.onda||"",ciclo:m&&m.ciclo||""};
+    });
+    const rotasAtual=[...new Set(rr.map(x=>x.rotaAtual).filter(Boolean))].length;
+    const rotasDestino=[...new Set(rr.map(x=>x.rotaCorreta).filter(Boolean))].length;
+    const auditores=[...new Set(rr.map(x=>x.auditor).filter(Boolean))].length;
+    const drivers=[...new Set(rr.map(x=>x.motorista).filter(Boolean))].length;
+    const repRows=()=>rr.map(x=>({"ID do pacote":x.id,"Data/Hora":x.data,"Rota onde estava":x.rotaAtual,"Rota correta":x.rotaCorreta,"Gaiola correta":x.gaiola,"Auditor":x.auditor,"Motorista":x.motorista,"Placa":x.placa,"Transportadora":x.transp,"Vaga correta":x.vaga,"Rua correta":x.rua,"Onda":x.onda,"Ciclo":x.ciclo}));
+    body=html`<div class="col-span-2 md:col-span-12 grid grid-cols-2 md:grid-cols-5 gap-3">
+        <${AmStat} l="Aduanas a mais" v=${rr.length} color="var(--amber)"/>
+        <${AmStat} l="Rotas onde estavam" v=${rotasAtual}/>
+        <${AmStat} l="Rotas corretas" v=${rotasDestino} color="#5ee6b0"/>
+        <${AmStat} l="Auditores" v=${auditores} color="var(--accent)"/>
+        <${AmStat} l="Motoristas" v=${drivers}/>
+      </div>
+      <${Card} className="col-span-2 md:col-span-12" title="Relatório de Aduanas a mais" right=${html`<div class="flex flex-wrap gap-2">
+        <${motion.button} ...${tactile} type="button" onClick=${()=>{const r=repRows();if(!r.length)return setMsg("Não há Aduanas a mais para exportar.");copy([Object.keys(r[0]).join("\t"),...r.map(o=>Object.values(o).join("\t"))].join("\n"),r.length+" linhas copiadas. Cole no Excel.")}} class=${amBtn+" bg-white text-black"}>Copiar para Excel</${motion.button}>
+      </div>`}>
+        <div class="text-xs text-muted mb-4">Mostra onde cada pacote foi auditado e para qual rota/gaiola ele realmente pertence. Auditor e motorista vêm da tabela colada na aba Aduana.</div>
+        <div class="overflow-x-auto -mx-1"><table class="w-full min-w-[1450px] text-sm">
+          <thead><tr class="text-left text-[10px] uppercase tracking-[.14em] text-muted">
+            ${["ID do pacote","Data/Hora","Rota onde estava","Rota correta","Gaiola correta","Auditor","Motorista","Placa","Transportadora","Vaga","Rua","Onda","Ciclo"].map(h=>html`<th key=${h} class="py-2 px-2 font-semibold">${h}</th>`)}
+          </tr></thead>
+          <tbody>${rr.map(x=>html`<tr key=${x.id+"|"+x.rotaAtual} class="border-t border-line/60">
+            <td class="py-2 px-2 font-mono">${x.id}</td><td class="py-2 px-2 whitespace-nowrap">${x.data||"—"}</td>
+            <td class="py-2 px-2 font-mono font-bold" style=${{color:"var(--amber)"}}>${x.rotaAtual||"—"}</td>
+            <td class="py-2 px-2 font-mono font-bold" style=${{color:"#5ee6b0"}}>${x.rotaCorreta||"—"}</td>
+            <td class="py-2 px-2 font-mono font-bold" style=${{color:"var(--accent)"}}>${x.gaiola||"—"}</td>
+            <td class="py-2 px-2">${x.auditor||"—"}</td><td class="py-2 px-2 font-semibold">${x.motorista||"—"}</td>
+            <td class="py-2 px-2 font-mono">${x.placa||"—"}</td><td class="py-2 px-2">${x.transp||"—"}</td>
+            <td class="py-2 px-2 font-mono">${x.vaga?"V"+x.vaga:"—"}</td><td class="py-2 px-2">${x.rua||"—"}</td>
+            <td class="py-2 px-2">${x.onda?String(x.onda).replace(/^onda\s*/i,"Onda "):"—"}</td><td class="py-2 px-2 font-mono">${x.ciclo||"—"}</td>
+          </tr>`)}
+          ${!rr.length&&html`<tr><td colspan="13" class="py-8 px-2 text-muted text-center">Nenhuma Aduana a mais analisada ainda. Cole a tabela em A mais › Aduana.</td></tr>`}</tbody>
+        </table></div>
       </${Card}>`;
   } else if(tab==="conexoes"){
     const qq=normTxt(cxQ);const list=conns.filter(c=>!qq||[c.id,c.rota,c.gaiola,c.rua,c.from,c.ciclo,String(c.vaga)].some(v=>normTxt(v).includes(qq))).slice().reverse();
-    const rows=()=>list.map(c=>({Hora:new Date(c.t).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}),"ID do pacote":c.id,"Estava em":c.from,"Aduana feita por":c.fromResp||"",Transportadora:CARRIERS[c.sigla]?.n||c.transp,"Rota / Gaiola":c.gaiola,"ID rota":c.rota,Layout:c.lk,Vaga:c.vaga,Rua:c.rua,"Responsável":c.resp||"",Onda:c.onda,Parada:c.parada,Ciclo:c.ciclo}));
+    const rows=()=>list.map(c=>({Hora:new Date(c.t).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}),"ID do pacote":c.id,"Rota onde está":c.from||"","Aduana feita por":c.fromResp||"",Transportadora:CARRIERS[c.sigla]?.n||c.transp,"Rota correta":c.rota||"","Gaiola correta":c.gaiola||"","Layout":c.lk,Vaga:c.vaga,Rua:c.rua,"Responsável":c.resp||"",Onda:c.onda,Parada:c.parada,Ciclo:c.ciclo}));
     body=html`<${Card} className="col-span-2 md:col-span-12" title="Pacotes conectados à rota certa" right=${html`<div class="flex flex-wrap items-center gap-2">
         <input value=${cxQ} onInput=${e=>setCxQ(e.target.value)} placeholder="Buscar ID, rota, rua" aria-label="Buscar conexões" class="bg-white/5 border border-line rounded-lg px-3 py-1.5 text-xs text-ink outline-none focus:border-[var(--accent)]"/>
         <${motion.button} ...${tactile} type="button" onClick=${()=>{const r=rows();if(!r.length)return setMsg("Nada para copiar");copy([Object.keys(r[0]).join("\t"),...r.map(o=>Object.values(o).join("\t"))].join("\n"),r.length+" linhas copiadas. Cole no Excel.")}} class=${amBtn+" bg-white text-black"}>Copiar para Excel</${motion.button}>
         <${motion.button} ...${tactile} type="button" onClick=${()=>{if(!clearAsk){setClearAsk(true);setTimeout(()=>setClearAsk(false),3500);return}setConns([]);setClearAsk(false);setMsg("Conexões apagadas")}} class=${amBtn+" border"} style=${clearAsk?{background:"#e5262a",color:"#fff",borderColor:"#e5262a"}:{borderColor:"rgba(229,38,42,.6)",color:"#ff8a8c"}}>${clearAsk?"Toque de novo para apagar":"Limpar tudo"}</${motion.button}></div>`}>
-      <div class="overflow-x-auto -mx-1"><table class="w-full min-w-[900px] text-sm">
-        <thead><tr class="text-left text-[11px] uppercase tracking-[.14em] text-muted">${["Hora","ID do pacote","Estava em","Transportadora","Rota / gaiola","Vaga","Rua","Responsável","Onda","Ciclo",""].map(h=>html`<th key=${h} class="py-2 px-2 font-semibold">${h}</th>`)}</tr></thead>
+      <div class="overflow-x-auto -mx-1"><table class="w-full min-w-[1120px] text-sm">
+        <thead>
+          <tr class="text-left text-[10px] uppercase tracking-[.16em]">
+            <th colspan="2" class="py-2 px-2 text-muted"></th>
+            <th class="py-2 px-3 rounded-t-xl" style=${{color:"var(--amber)",background:"rgba(255,181,71,.08)"}}>ONDE ESTÁ</th>
+            <th colspan="7" class="py-2 px-3 rounded-t-xl" style=${{color:"#5ee6b0",background:"rgba(52,211,153,.07)"}}>ONDE PERTENCE</th>
+            <th colspan="2"></th>
+          </tr>
+          <tr class="text-left text-[11px] uppercase tracking-[.14em] text-muted">${["Hora","ID do pacote","Rota atual","Transportadora","Rota correta","Gaiola correta","Vaga correta","Rua correta","Responsável","Onda","Ciclo",""].map(h=>html`<th key=${h} class="py-2 px-2 font-semibold">${h}</th>`)}</tr>
+        </thead>
         <tbody>${list.map(c=>html`<tr key=${c.id} class="border-t border-line">
           <td class="py-2 px-2 font-mono text-xs tnum">${new Date(c.t).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}</td><td class="py-2 px-2 font-mono tnum">${c.id}</td>
-          <td class="py-2 px-2"><span class="font-mono text-muted">${c.from||"—"}</span>${c.fromResp&&html`<div class="text-xs font-semibold" style=${{color:"var(--amber)"}}>${c.fromResp}${c.fromVaga?" · V"+c.fromVaga:""}</div>`}</td><td class="py-2 px-2"><span class="inline-flex items-center gap-2"><${AmChip} k=${c.sigla}/>${CARRIERS[c.sigla]?.n||c.transp||""}</span></td>
-          <td class="py-2 px-2 font-mono font-bold">${c.gaiola}</td>
+          <td class="py-2 px-3 rounded-lg" style=${{background:"rgba(255,181,71,.07)"}}><div class="text-[9px] uppercase tracking-[.12em] text-muted">Está agora</div><span class="font-mono font-bold text-base" style=${{color:"var(--amber)"}}>${c.from||"—"}</span>${c.fromResp&&html`<div class="text-xs font-semibold text-muted">${c.fromResp}${c.fromVaga?" · V"+c.fromVaga:""}</div>`}</td><td class="py-2 px-2"><span class="inline-flex items-center gap-2"><${AmChip} k=${c.sigla}/>${CARRIERS[c.sigla]?.n||c.transp||""}</span></td>
+          <td class="py-2 px-2 font-mono font-bold" style=${{color:"#5ee6b0"}}>${c.rota||"—"}</td>
+          <td class="py-2 px-2 font-mono font-bold" style=${{color:"var(--accent)"}}>${c.gaiola||"—"}</td>
           <td class="py-2 px-2">${c.vaga?html`<button type="button" onClick=${()=>goVaga(c.lk,+c.vaga)} class="font-mono font-bold px-1.5 py-0.5 rounded" style=${{background:"var(--accent)",color:"#04121b"}}>V${c.vaga}</button>`:"—"}</td>
           <td class="py-2 px-2 whitespace-nowrap">${c.rua||"—"}</td><td class="py-2 px-2 font-semibold">${c.resp||(c.lk?respNames(c.vaga?respOfVaga(c.lk,+c.vaga):[]):"")||"—"}</td><td class="py-2 px-2">${c.onda?String(c.onda).replace(/^onda\s*/i,"Onda "):"—"}</td>
           <td class="py-2 px-2"><span class="font-mono text-[11px] px-1.5 py-0.5 rounded-md bg-white/10">${c.ciclo}</span></td>
           <td class="py-2 px-2 text-right"><button type="button" aria-label=${"Desconectar "+c.id} onClick=${()=>setConns(conns.filter(x=>x!==c))} class="text-muted hover:text-[#ff8a8c] px-2">×</button></td></tr>`)}
-          ${!list.length&&html`<tr><td colspan="11" class="py-6 px-2 text-muted">Nenhum pacote conectado. Conecte pela busca ou pela aduana.</td></tr>`}</tbody></table></div>
+          ${!list.length&&html`<tr><td colspan="12" class="py-6 px-2 text-muted">Nenhum pacote conectado. Conecte pela busca ou pela aduana.</td></tr>`}</tbody></table></div>
     </${Card}>`;
   } else {
     const srcs=AMX.sources;const cycOpts=[AMX.SEMC,...new Set(["AM","AM1","PM1","PM2","SD","CHP",...srcs.map(s=>s.ciclo).filter(Boolean)])];
@@ -1895,28 +2014,135 @@ function EquipeView({cur,L,setCur,respAll,saveResp,goVaga}){
 }
 
 
+
+/* ============ SINCRONIZAÇÃO COMPARTILHADA SUPABASE ============ */
+const SVC_SB_URL="https://cjentqthseecgizptyqe.supabase.co";
+const SVC_SB_KEY="sb_publishable_ca35t-HrAIN5fpJk45P8FQ_10xWlHIV";
+const SVC_STATE_KEY="svc-operacao";
+let svcSB=null;
+async function svcEnsureSB(){
+  if(svcSB)return svcSB;
+  await ensureSupabaseLib();
+  svcSB=window.supabase.createClient(SVC_SB_URL,SVC_SB_KEY,{realtime:{params:{eventsPerSecond:2}}});
+  return svcSB;
+}
+let svcRemoteReady=false, svcSaveTimer=null, svcApplyingRemote=false;
+
+function svcSnapshot(edits,tagOv,geos,readAt,respAll){
+  let plan=null;try{plan=JSON.parse(localStorage.getItem("svc-plan2")||"null")}catch(e){}
+  return {edits,tagOv,geos,readAt,respAll,plan,updatedAt:new Date().toISOString()};
+}
+async function svcLoadRemote(){
+  try{await svcEnsureSB()}catch(e){console.error("SVC Supabase lib",e);return null}
+  if(!svcSB)return null;
+  const {data,error}=await svcSB.from("svc_shared_state").select("payload").eq("state_key",SVC_STATE_KEY).maybeSingle();
+  if(error){console.error("SVC load",error);return null}
+  return data?.payload||null;
+}
+async function svcPatchRemote(patch){
+  if(svcApplyingRemote)return;
+  try{await svcEnsureSB()}catch(e){return}
+  if(!svcSB)return;
+  clearTimeout(svcSaveTimer);
+  svcSaveTimer=setTimeout(async()=>{
+    const {data,error:readErr}=await svcSB.from("svc_shared_state").select("payload").eq("state_key",SVC_STATE_KEY).maybeSingle();
+    if(readErr){console.error("SVC read before save",readErr);return}
+    const payload={...(data?.payload||{}),...patch,updatedAt:new Date().toISOString()};
+    const {error}=await svcSB.from("svc_shared_state").upsert(
+      {state_key:SVC_STATE_KEY,payload,updated_at:new Date().toISOString()},
+      {onConflict:"state_key"}
+    );
+    if(error)console.error("SVC save",error);
+  },650);
+}
+async function svcSavePlanRemote(plan){
+  if(svcApplyingRemote)return;
+  try{await svcEnsureSB()}catch(e){return}
+  if(!svcSB)return;
+  const {data}=await svcSB.from("svc_shared_state").select("payload").eq("state_key",SVC_STATE_KEY).maybeSingle();
+  const payload={...(data?.payload||{}),plan,updatedAt:new Date().toISOString()};
+  const {error}=await svcSB.from("svc_shared_state").upsert(
+    {state_key:SVC_STATE_KEY,payload,updated_at:new Date().toISOString()},
+    {onConflict:"state_key"}
+  );
+  if(error)console.error("SVC plan save",error);
+}
+function svcCacheRemote(p){
+  try{
+    if(p.edits)localStorage.setItem("svc-edits",JSON.stringify(p.edits));
+    if(p.tagOv)localStorage.setItem("svc-tags",JSON.stringify(p.tagOv));
+    if(p.geos)localStorage.setItem("svc-geo9",JSON.stringify(p.geos));
+    if(p.readAt)localStorage.setItem("svc-read-at",JSON.stringify(p.readAt));
+    if(p.respAll)localStorage.setItem(RESP_KEY,JSON.stringify(p.respAll));
+    if(Object.prototype.hasOwnProperty.call(p,"plan")){
+      let oldPlan=null;try{oldPlan=JSON.parse(localStorage.getItem("svc-plan2")||"null")}catch(e){}
+      if(JSON.stringify(oldPlan)!==JSON.stringify(p.plan)){
+        if(p.plan==null)localStorage.removeItem("svc-plan2");
+        else localStorage.setItem("svc-plan2",JSON.stringify(p.plan));
+        window.dispatchEvent(new CustomEvent("svc-plan-remote",{detail:p.plan}));
+      }
+    }
+  }catch(e){}
+}
+
 function App(){
   let init="AM0-CHP";try{const s=localStorage.getItem("svc-tab");if(s&&LAYOUTS[s])init=s}catch(e){}
-  const [cur,setCurRaw]=useState(init);const [filter,setFilter]=useState(null);const [sel,setSel]=useState(null);const [loading,setLoading]=useState(true);
+  const [cur,setCurRaw]=useState(init);const [filter,setFilter]=useState(null);const [sel,setSel]=useState(null);
   const [view,setViewRaw]=useState(()=>{try{return localStorage.getItem("svc-view")||"planta"}catch(e){return "planta"}});
   const setView=v=>{setViewRaw(v);try{localStorage.setItem("svc-view",v)}catch(e){}};
-  useEffect(()=>{const t=setTimeout(()=>setLoading(false),650);return()=>clearTimeout(t)},[]);
   const setCur=k=>{if(k===cur)return;setCurRaw(k);setFilter(null);setSel(null);try{localStorage.setItem("svc-tab",k)}catch(e){}};
   const RA0=(()=>{try{return JSON.parse(localStorage.getItem("svc-read-at")||"{}")||{}}catch(e){return {}}})();
   const semData=(key)=>{try{const o=JSON.parse(localStorage.getItem(key)||"{}")||{};const n={};Object.keys(o).forEach(k=>{if(RA0[k])n[k]=o[k]});localStorage.setItem(key,JSON.stringify(n));return n}catch(e){return {}}};
   const [edits,setEdits]=useState(()=>semData("svc-edits"));
   const [hist,setHist]=useState({});
   const [respAll,setRespAll]=useState(()=>getRespAll());
-  const saveResp=(k,people)=>{const n={...getRespAll(),[k]:{people,at:new Date().toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}};try{localStorage.setItem(RESP_KEY,JSON.stringify(n))}catch(e){}setRespAll(n)};
+  const saveResp=(k,people)=>{const n={...getRespAll(),[k]:{people,at:new Date().toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}};try{localStorage.setItem(RESP_KEY,JSON.stringify(n))}catch(e){}setRespAll(n);svcPatchRemote({respAll:n})};
   const [readAt,setReadAt]=useState(()=>{try{return JSON.parse(localStorage.getItem("svc-read-at")||"{}")}catch(e){return {}}});
-  const storeReadAt=o=>{setReadAt(o);try{localStorage.setItem("svc-read-at",JSON.stringify(o))}catch(e){}};
+  const storeReadAt=o=>{setReadAt(o);try{localStorage.setItem("svc-read-at",JSON.stringify(o))}catch(e){}svcPatchRemote({readAt:o})};
   const [geos,setGeos]=useState(()=>{try{return JSON.parse(localStorage.getItem("svc-geo9")||"{}")}catch(e){return {}}});
   const [tagOv,setTagOv]=useState(()=>semData("svc-tags"));
-  const storeTags=o=>{setTagOv(o);try{localStorage.setItem("svc-tags",JSON.stringify(o))}catch(e){}};
+  const lastRemoteRef=useRef("");
+  const applyRemote=React.useCallback(p=>{
+    if(!p)return;
+    const sig=String(p.updatedAt||"");
+    if(sig&&lastRemoteRef.current===sig)return;
+    lastRemoteRef.current=sig;
+    svcApplyingRemote=true;
+    if(p.edits)setEdits(old=>JSON.stringify(old)===JSON.stringify(p.edits)?old:p.edits);
+    if(p.tagOv)setTagOv(old=>JSON.stringify(old)===JSON.stringify(p.tagOv)?old:p.tagOv);
+    if(p.geos)setGeos(old=>JSON.stringify(old)===JSON.stringify(p.geos)?old:p.geos);
+    if(p.readAt)setReadAt(old=>JSON.stringify(old)===JSON.stringify(p.readAt)?old:p.readAt);
+    if(p.respAll)setRespAll(old=>JSON.stringify(old)===JSON.stringify(p.respAll)?old:p.respAll);
+    svcCacheRemote(p);
+    setTimeout(()=>{svcApplyingRemote=false},120);
+  },[]);
+  useEffect(()=>{
+    let ch,alive=true;
+    const startOnline=async()=>{
+      try{
+        const p=await svcLoadRemote();
+        if(!alive)return;
+        if(p)applyRemote(p);
+        else await svcSB?.from("svc_shared_state").upsert({state_key:SVC_STATE_KEY,payload:svcSnapshot(edits,tagOv,geos,readAt,respAll),updated_at:new Date().toISOString()},{onConflict:"state_key"});
+        svcRemoteReady=true;
+        if(svcSB){
+          ch=svcSB.channel("svc-shared-state")
+            .on("postgres_changes",{event:"*",schema:"public",table:"svc_shared_state",filter:"state_key=eq."+SVC_STATE_KEY},payload=>{
+              const p2=payload.new?.payload;
+              if(p2&&document.visibilityState==="visible")applyRemote(p2);
+            }).subscribe();
+        }
+      }catch(e){console.error("SVC online",e)}
+    };
+    const tid=setTimeout(startOnline,4000);
+    return()=>{alive=false;clearTimeout(tid);if(ch)svcSB.removeChannel(ch)}
+  },[]);
+
+  const storeTags=o=>{setTagOv(o);try{localStorage.setItem("svc-tags",JSON.stringify(o))}catch(e){}svcPatchRemote({tagOv:o})};
   const stamp=()=>{if(!readAt[cur])storeReadAt({...readAt,[cur]:new Date().toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})})};
   const onTag=(v,t)=>{stamp();const cur2={...(tagOv[cur]||{}),[v]:t};storeTags({...tagOv,[cur]:cur2})};
-  const storeGeos=o=>{setGeos(o);try{localStorage.setItem("svc-geo9",JSON.stringify(o))}catch(e){}};
-  const storeEdits=o=>{setEdits(o);try{localStorage.setItem("svc-edits",JSON.stringify(o))}catch(e){}};
+  const storeGeos=o=>{setGeos(o);try{localStorage.setItem("svc-geo9",JSON.stringify(o))}catch(e){}svcPatchRemote({geos:o})};
+  const storeEdits=o=>{setEdits(o);try{localStorage.setItem("svc-edits",JSON.stringify(o))}catch(e){}svcPatchRemote({edits:o})};
   const layoutOf=k=>({...LAYOUTS[k],key:k,map:edits[k]||EMPTY_MAP,tags:{},readAt:readAt[k]||null,geo:mergeGeo(geos[k]),tags:(()=>{const t={};Object.entries(tagOv[k]||{}).forEach(([v,x])=>{if(x)t[v]=x;else delete t[v]});return t})()});
   const L=useMemo(()=>layoutOf(cur),[cur,edits,geos,tagOv,readAt]);
   // vindo do A mais: abre o layout do ciclo com a vaga (ou a transportadora) destacada
@@ -1942,8 +2168,7 @@ function App(){
     <${Nav} cur=${cur} setCur=${setCur} view=${view} setView=${setView}/>
     <main class="max-w-7xl mx-auto px-4 pt-32 pb-16">
       <${AnimatePresence} mode="wait">
-        ${loading?html`<${motion.div} key="sk" exit=${{opacity:0}}><${Skeleton}/></${motion.div}>`
-        :view==="equipe"?html`<${EquipeView} key=${"eq"+cur} cur=${cur} L=${L} setCur=${setCur} respAll=${respAll} saveResp=${saveResp} goVaga=${goVaga}/>`
+        ${view==="equipe"?html`<${EquipeView} key=${"eq"+cur} cur=${cur} L=${L} setCur=${setCur} respAll=${respAll} saveResp=${saveResp} goVaga=${goVaga}/>`
         :view==="amais"?html`<${AMaisView} key="amais" layoutOf=${layoutOf} goVaga=${goVaga}/>`
         :view==="plan"?html`<${PlanView} key="plan" cur=${cur} L=${L} setCur=${setCur} onZero=${onZero} onApplyRead=${onApplyRead} onDistribute=${onDistribute} goLayout=${()=>{setView("planta");window.scrollTo({top:0,behavior:"smooth"})}}/>`
         :html`<${motion.div} key="ok" variants=${stagger} initial="hidden" animate="show" class="grid grid-cols-1 md:grid-cols-12 gap-4">
