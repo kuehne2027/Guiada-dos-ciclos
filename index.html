@@ -1252,11 +1252,33 @@ function PlanView({cur,L,setCur,onZero,onApplyRead,onDistribute,goLayout}){
     if(!inf)return r;
     return {...r,onda:inf.onda??r.onda,parada:(inf.parada!==""&&inf.parada!=null)?inf.parada:r.parada};
   };
+  // Distribuição por rua: primeiro respeita a gaiola/rota escrita no desenho.
+  // Quando o desenho não trouxe os nomes das gaiolas, usa as vagas da própria
+  // transportadora no layout para distribuir TODAS as rotas entre as ruas.
+  // Isso evita o cenário "333 rotas / Rua 1..5 = 0" sem inventar outra transportadora.
+  const carrierSlots={};
+  Object.entries(L.map||{}).forEach(([v,k])=>{
+    if(!k||k==="V"||k==="X")return;
+    (carrierSlots[k]=carrierSlots[k]||[]).push(+v);
+  });
+  Object.values(carrierSlots).forEach(a=>a.sort((a,b)=>rua(a)-rua(b)||a-b));
+  const carrierPos={};
   const placed=routes.map(r0=>{
     r0=enrichPlan(r0);
     const keys=[r0.gaiola,r0.rota,gName(r0)].map(routeKey).filter(Boolean);
     let vv=null;for(const k of keys){if(vagaOf[k]){vv=vagaOf[k];break}}
-    return vv?{...r0,vaga:vv,ruasFix:[rua(vv)],matchLayout:true}:{...r0,vaga:null,ruasFix:[],matchLayout:false}
+    if(vv)return {...r0,vaga:vv,ruasFix:[rua(vv)],matchLayout:true};
+
+    // Fallback seguro para a visão por RUA: mantém a rota dentro das ruas onde
+    // a transportadora realmente possui vagas no layout atual. Se a mesma
+    // transportadora ocupa mais de uma rua, reparte proporcionalmente às vagas.
+    const slots=carrierSlots[r0.k]||[];
+    if(slots.length){
+      const i=carrierPos[r0.k]||0;carrierPos[r0.k]=i+1;
+      const sv=slots[i%slots.length];
+      return {...r0,vaga:null,ruasFix:[rua(sv)],matchLayout:false,streetByCarrier:true};
+    }
+    return {...r0,vaga:null,ruasFix:[],matchLayout:false};
   });
   placed.forEach(r=>{
     // Rua só pode vir de vaga/gaiola/rota encontrada no layout. Não usar a rua da transportadora como chute.
