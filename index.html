@@ -1199,6 +1199,8 @@ function PlanView({cur,L,setCur,onZero,onApplyRead,onDistribute,goLayout}){
     setSrc(null);setErr("");
     if(onZero)onZero();
   };
+  const [planSync,setPlanSync]=useState(()=>window.__svcPlanSync||null);
+  useEffect(()=>{const fn=()=>setPlanSync(window.__svcPlanSync);window.addEventListener("svc-plan-sync",fn);return()=>window.removeEventListener("svc-plan-sync",fn)},[]);
   const [ruaSel,setRuaSel]=useState(0);const [paste,setPaste]=useState(false);const [err,setErr]=useState("");const [drag,setDrag]=useState(false);const [busy,setBusy]=useState(false);const [guiada,setGuiada]=useState(false);
   const rows=src?src.rows:[];const headers=src?src.headers:[];const m=src?src.map:{};
   const ciclo=src?detectCiclo(src.title||"",rows,m):null;
@@ -1288,6 +1290,7 @@ function PlanView({cur,L,setCur,onZero,onApplyRead,onDistribute,goLayout}){
         ${ciclo&&chip("Ciclo "+ciclo+(CICLO_TAG?" · "+CICLO_TAG:""),"")}
         ${ciclo&&(ciclo===cur?chip("Layout "+cur+" aplicado","ok"):chip("Layout aberto: "+cur,"warn"))}
         ${src&&(src.noHeader?chip("Sem cabeçalho · colunas reconhecidas pelo conteúdo","ok"):src.headerRow&&chip("Cabeçalho na linha "+src.headerRow,"ok"))}
+        ${src&&planSync&&chip(planSync.ok?"☁ Salvo na nuvem · "+planSync.at:"☁ Não salvou na nuvem: "+planSync.err,planSync.ok?"ok":"warn")}
         ${src&&chip((src.isDefault?"Enviado em ":"Importado em ")+src.at,"")}
       </div>
       ${ciclo&&ciclo!==cur&&html`<div class="mt-3 flex flex-wrap items-center gap-2 text-sm rounded-2xl px-3 py-2" style=${{background:"rgba(255,181,71,.1)",color:"var(--amber)"}}>
@@ -1411,7 +1414,7 @@ const AMX=(()=>{
   function normId(v){let s=String(v??"").trim();if(!s)return "";if(s[0]==="{"){try{const j=JSON.parse(s);s=String(j.id??j.shipment_id??j.ID??s)}catch(e){}}
     s=s.replace(/\s+/g,"");if(/^\d+\.0+$/.test(s))s=s.replace(/\.0+$/,"");return s.toUpperCase()}
   const lsGet=k=>{try{const v=localStorage.getItem("lam_"+k);return v?JSON.parse(v):null}catch(e){return null}};
-  const lsSet=(k,v)=>{try{localStorage.setItem("lam_"+k,JSON.stringify(v));return true}catch(e){return false}};
+  const lsSet=(k,v)=>{let ok=true;try{localStorage.setItem("lam_"+k,JSON.stringify(v))}catch(e){ok=false}if(onStateCb&&(k==="conns"||k==="adText"))onStateCb(k);return ok};
   const IDB={open(){return new Promise((res,rej)=>{try{const q=indexedDB.open("localizador-a-mais",1);q.onupgradeneeded=()=>q.result.createObjectStore("kv");q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error)}catch(e){rej(e)}})},
     async get(k){try{const db=await IDB.open();return await new Promise(r=>{const t=db.transaction("kv").objectStore("kv").get(k);t.onsuccess=()=>r(t.result);t.onerror=()=>r(null)})}catch(e){return null}},
     async set(k,v){try{const db=await IDB.open();return await new Promise(r=>{const tx=db.transaction("kv","readwrite");tx.objectStore("kv").put(v,k);tx.oncomplete=()=>r(true);tx.onerror=()=>r(false)})}catch(e){return false}}};
@@ -1466,7 +1469,9 @@ const AMX=(()=>{
     sources=sources.concat(add);rebuild();save()}
   function compact(s){const keep=[...new Set(Object.values(s.map).filter(i=>i>=0))].sort((a,b)=>a-b);const pos={};keep.forEach((c,i)=>pos[c]=i);
     const map={};for(const k in s.map)map[k]=s.map[k]>=0?pos[s.map[k]]:-1;return {id:s.id,name:s.name,ciclo:s.ciclo,txt:s.txt,headers:keep.map(c=>s.headers[c]),rows:s.rows.map(r=>keep.map(c=>r[c])),map}}
-  const save=()=>IDB.set("sources",sources.map(compact));
+  let onChangeCb=null,onStateCb=null;
+  const save=()=>{sources=sources.map(compact);IDB.set("sources",sources);if(onChangeCb)onChangeCb()};
+  function replaceSources(list){sources=Array.isArray(list)?list:[];rebuild();return IDB.set("sources",sources)}
   let loaded=false,loadPromise=null;
   async function load(){
     if(loaded)return sources;
@@ -1503,9 +1508,72 @@ const AMX=(()=>{
     const w=matches.filter(m=>!m.semRota);if(!w.length)return {st:"sr",matches,connected};return {st:"ok",matches:w,best:w[0],connected}}
   const extractIds=t=>[...new Set(String(t).split(/[\s,;|]+/).map(normId).filter(x=>x&&x.length>=6))];
   function findRoute(name){const l=routeByName.get(rk(name))||[];return l[0]||null}
-  return {findRoute,cicloFrom,rebuild,lookup,destLabel,cyclesInfo,planSourcesFromLines,PLAN_LINE,readFile,addSources,load,setExtra,systemPlan,setSourceCiclo,removeSource,clearSources,
+  return {compact,replaceSources,onChange:f=>{onChangeCb=f},onState:f=>{onStateCb=f},findRoute,cicloFrom,rebuild,lookup,destLabel,cyclesInfo,planSourcesFromLines,PLAN_LINE,readFile,addSources,load,setExtra,systemPlan,setSourceCiclo,removeSource,clearSources,
     parseAduanaText,parseAduanaAoa,isAmais,analyze,extractIds,layoutOfCiclo,cycSort,SEMC,FIELDS,lsGet,lsSet,isSaca,
     get sources(){return sources},get extra(){return extra},get size(){return idx.size},get routes(){return routeIdx.size}};
+})();
+
+/* ============ A MAIS · NUVEM (bases, conexões e aduana iguais em todos os PCs) ============ */
+const AMXS=(()=>{
+  const IDX="amx-index",EST="amx-estado",T="svc_shared_state";
+  const st={status:"",at:"",err:"",info:""};const subs=new Set();const set=o=>{Object.assign(st,o);subs.forEach(f=>f({...st}))};
+  const lg=k=>{try{return localStorage.getItem(k)}catch(e){return null}};const ls=(k,v)=>{try{if(v==null)localStorage.removeItem(k);else localStorage.setItem(k,v)}catch(e){}};
+  const hhmm=()=>new Date().toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
+  const errTxt=e=>String(e&&(e.message||e.error_description||e.details||e.code)||e||"erro").slice(0,140);
+  const sig=s=>s.id+"|"+(s.ciclo||"")+"|"+s.rows.length+"|"+JSON.stringify(s.map);
+  async function gz(str){if(!window.CompressionStream)return "j:"+str;
+    const buf=new Uint8Array(await new Response(new Blob([str]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer());
+    let bin="";for(let i=0;i<buf.length;i+=0x8000)bin+=String.fromCharCode.apply(null,buf.subarray(i,i+0x8000));return "g:"+btoa(bin)}
+  async function ungz(z){if(z.startsWith("j:"))return z.slice(2);const bin=atob(z.slice(2));const buf=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)buf[i]=bin.charCodeAt(i);
+    return await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip"))).text()}
+  async function sb(){await svcEnsureSB();if(!svcSB)throw new Error("sem conexão com a nuvem");return svcSB}
+  async function getRow(k){const c=await sb();const {data,error}=await c.from(T).select("payload").eq("state_key",k).maybeSingle();if(error)throw error;return data?.payload||null}
+  async function putRow(k,payload){const c=await sb();const {error}=await c.from(T).upsert({state_key:k,payload,updated_at:new Date().toISOString()},{onConflict:"state_key"});if(error)throw error}
+  const srcKey=id=>"amx-src:"+id;
+  /* ---- bases ---- */
+  let pushing=null,again=false,pulling=false;
+  function markDirty(){ls("amx-dirty","1");pushBases()}
+  function pushBases(){if(pushing){again=true;return pushing}
+    pushing=(async()=>{try{do{again=false;const list=AMX.sources;const sent=JSON.parse(lg("amx-sent")||"{}");
+        for(const s of list){const g=sig(s);if(sent[s.id]===g)continue;set({status:"enviando",err:"",info:s.name});
+          await putRow(srcKey(s.id),{id:s.id,z:await gz(JSON.stringify(s))});sent[s.id]=g;ls("amx-sent",JSON.stringify(sent))}
+        const ver=Date.now();await putRow(IDX,{ver,items:list.map(s=>({id:s.id,name:s.name,ciclo:s.ciclo||"",n:s.rows.length,sig:sig(s)}))});
+        Object.keys(sent).forEach(id=>{if(!list.some(s=>s.id===id))delete sent[id]});ls("amx-sent",JSON.stringify(sent));
+        ls("amx-ver",String(ver));if(!again)ls("amx-dirty",null);set({status:"ok",at:hhmm(),err:"",info:""})}while(again)}
+      catch(e){console.error("A mais · nuvem",e);set({status:"erro",err:errTxt(e),info:""})}finally{pushing=null}})();return pushing}
+  async function pullBases(){if(pulling||pushing)return;pulling=true;
+    try{const idx=await getRow(IDX);const local=+lg("amx-ver")||0;
+      if(!idx||!Array.isArray(idx.items)){if(AMX.sources.length){pulling=false;return pushBases()}set({status:"ok",at:hhmm(),err:""});return}
+      if(lg("amx-dirty")){pulling=false;return pushBases()}
+      if(idx.ver<=local){set({status:"ok",at:hhmm(),err:""});return}
+      set({status:"baixando",err:"",info:""});const have=new Map(AMX.sources.map(s=>[s.id,s]));const out=[];const sent={};
+      for(const it of idx.items){let s=have.get(it.id);
+        if(!s||sig(s)!==it.sig){set({status:"baixando",info:it.name});const row=await getRow(srcKey(it.id));if(!row||!row.z)continue;s=JSON.parse(await ungz(row.z))}
+        out.push(s);sent[s.id]=sig(s)}
+      // primeira vez neste PC: o que já estava aqui e não está na nuvem também é mantido e enviado
+      const extra=local?[]:AMX.sources.filter(s=>!idx.items.some(it=>it.id===s.id));
+      await AMX.replaceSources([...out,...extra]);ls("amx-sent",JSON.stringify(sent));ls("amx-ver",String(idx.ver));
+      set({status:"ok",at:hhmm(),err:"",info:""});window.dispatchEvent(new Event("amx-remote"));
+      if(extra.length){pulling=false;return markDirty()}}
+    catch(e){console.error("A mais · nuvem",e);set({status:"erro",err:errTxt(e),info:""})}finally{pulling=false}}
+  /* ---- conexões + aduana ---- */
+  let estT=null,applying=false;
+  function pushEstado(){if(applying)return;ls("amx-est-dirty","1");clearTimeout(estT);
+    estT=setTimeout(async()=>{try{const at=Date.now();await putRow(EST,{at,conns:AMX.lsGet("conns")||[],adText:AMX.lsGet("adText")||""});ls("amx-est-at",String(at));ls("amx-est-dirty",null)}
+      catch(e){console.error("A mais · nuvem (conexões)",e);set({status:"erro",err:errTxt(e)})}},1200)}
+  async function pullEstado(){try{if(lg("amx-est-dirty"))return pushEstado();const r=await getRow(EST);if(!r)return;
+      if((+r.at||0)>(+lg("amx-est-at")||0)){applying=true;try{AMX.lsSet("conns",r.conns||[]);AMX.lsSet("adText",r.adText||"")}finally{applying=false}
+        ls("amx-est-at",String(r.at));window.dispatchEvent(new Event("amx-remote"))}}
+    catch(e){console.error("A mais · nuvem (conexões)",e)}}
+  /* ---- liga tudo ---- */
+  let started=false,ch=null;
+  async function sync(){await pullBases();await pullEstado()}
+  function start(){if(started)return sync();started=true;AMX.onChange(markDirty);AMX.onState(pushEstado);
+    document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")sync()});
+    setInterval(()=>{if(document.visibilityState==="visible")sync()},60000);
+    sb().then(c=>{ch=c.channel("amx-shared").on("postgres_changes",{event:"*",schema:"public",table:T,filter:"state_key=in.("+IDX+","+EST+")"},()=>setTimeout(sync,800)).subscribe()}).catch(()=>{});
+    return sync()}
+  return {start,sync,pushBases,subscribe:f=>{subs.add(f);f({...st});return()=>subs.delete(f)},get state(){return {...st}}};
 })();
 
 /* ============ A MAIS · ligação com o layout lido do desenho ============ */
@@ -1621,7 +1689,11 @@ function AMaisView({layoutOf,goVaga}){
   const [cxQ,setCxQ]=useState("");const [clearAsk,setClearAsk]=useState(false);
   useEffect(()=>{if(!msg)return;const t=setTimeout(()=>setMsg(""),3200);return()=>clearTimeout(t)},[msg]);
   const applyAduana=(rows)=>{setAduana(rows);const est=[...new Set(rows.map(a=>a.estado))];const am=est.filter(AMX.isAmais);setEstSel(new Set(am.length?am:est))};
-  useEffect(()=>{AMX.setExtra(AMX.systemPlan());AMX.load().then(()=>{setLoading(false);bump();const t=AMX.lsGet("adText");if(t)applyAduana(AMX.parseAduanaText(t))})},[]);
+  const [cloud,setCloud]=useState(()=>AMXS.state);
+  useEffect(()=>{AMX.setExtra(AMX.systemPlan());AMX.load().then(()=>{setLoading(false);bump();const t=AMX.lsGet("adText");if(t)applyAduana(AMX.parseAduanaText(t));AMXS.start()})},[]);
+  useEffect(()=>AMXS.subscribe(setCloud),[]);
+  useEffect(()=>{const fn=()=>{setConnsRaw(AMX.lsGet("conns")||[]);const t=AMX.lsGet("adText")||"";setAdText(t);if(t)applyAduana(AMX.parseAduanaText(t));else{setAduana([]);setEstSel(null)}bump()};
+    window.addEventListener("amx-remote",fn);return()=>window.removeEventListener("amx-remote",fn)},[]);
   const copy=(t,ok)=>{try{navigator.clipboard.writeText(t).then(()=>setMsg(ok||"Copiado. Cole no Excel.")).catch(()=>setMsg("Não deu para copiar aqui."))}catch(e){setMsg("Não deu para copiar aqui.")}};
   const mkConn=(m,from,p,a)=>{p=p||amPlace(m,layoutOf);const op=from?amOrigin(from,layoutOf):null;return {fromResp:(a&&a.rep)|| (op?respNames(op.resp):""),fromVaga:op&&op.vaga||"",motorista:(a&&a.motorista)||"",placa:(a&&a.placa)||"",dataAduana:(a&&a.data)||"",resp:respNames(amResp(p)),id:m.id,t:Date.now(),from:from||"",ciclo:m.ciclo,rota:m.rota,gaiola:AMX.destLabel(m),sigla:m.sigla,transp:m.transp,onda:m.onda,parada:m.parada,lk:p&&p.lk||"",vaga:p&&p.vaga||"",rua:amRuaTxt(p)}};
   const connect=(m,from,p,a)=>{const ex=conns.find(c=>c.id===m.id&&c.rota===m.rota&&c.ciclo===m.ciclo);
@@ -1654,6 +1726,12 @@ function AMaisView({layoutOf,goVaga}){
     ${tab===id&&html`<${motion.span} layoutId="ampill" class="absolute inset-0 rounded-full" style=${{background:"var(--amber)"}} transition=${spring}/>`}
     <span class="relative">${t}${n?html` <span class="font-mono text-[10px] px-1.5 rounded-full bg-black/20">${n}</span>`:""}</span></${motion.button}>`;
 
+  const cloudTone=cloud.status==="erro"?["#ff8a8c","rgba(229,38,42,.1)"]:cloud.status==="ok"?["#5ee6b0","rgba(52,211,153,.08)"]:["var(--accent)","rgba(76,195,255,.08)"];
+  const cloudLine=cloud.status?html`<div class="flex flex-wrap items-center gap-2 text-xs rounded-xl px-3 py-2 mb-3" style=${{color:cloudTone[0],background:cloudTone[1]}}>
+    <span class="font-semibold">${cloud.status==="ok"?"☁ Salvo na nuvem"+(cloud.at?" · "+cloud.at:""):cloud.status==="enviando"?"☁ Enviando para a nuvem…":cloud.status==="baixando"?"☁ Baixando da nuvem…":"☁ Não salvou na nuvem"}</span>
+    <span class="text-muted">${cloud.status==="ok"?"bases, conexões e aduana aparecem em qualquer PC que abrir o app":cloud.info||cloud.err||""}</span>
+    ${cloud.status==="erro"&&html`<button type="button" onClick=${()=>AMXS.pushBases()} class="underline underline-offset-2 text-ink ml-auto">Tentar de novo</button>`}
+  </div>`:null;
   const header=html`<${motion.section} variants=${rise} class="col-span-2 md:col-span-12 flex flex-wrap items-end justify-between gap-3">
     <div><div class="text-[11px] uppercase tracking-[.16em] text-muted font-semibold">Localizador</div><h1 class="font-display text-3xl sm:text-5xl tracking-tight mt-1">A mais</h1></div>
     <${LayoutGroup} id="amtabs"><div class="inline-flex flex-wrap gap-1 p-1 rounded-full" style=${{background:"rgba(255,255,255,.05)"}}>
@@ -1874,6 +1952,7 @@ function AMaisView({layoutOf,goVaga}){
         <${motion.button} ...${tactile} type="button" onClick=${readPlanText} class=${amBtn+" mt-2"} style=${{background:"var(--amber)",color:"#1b1300"}}>Ler planejamento colado</${motion.button}>
       </${Card}>
       <${Card} className="col-span-2 md:col-span-12" title="Planilhas carregadas" right=${srcs.length>0&&html`<button type="button" onClick=${()=>{AMX.clearSources();bump();setMsg("Planilhas removidas")}} class="text-xs text-[#ff8a8c]">Remover todas</button>`}>
+        ${cloudLine}
         <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
           ${AMX.extra.map(s=>html`<div key=${s.id} class="rounded-2xl p-3 border border-[rgba(76,195,255,.3)] bg-[rgba(76,195,255,.05)] min-w-0">
             <div class="text-sm font-semibold break-words">${s.name}</div><div class="text-xs text-muted mt-1">${s.rows.length} linhas · ciclo ${s.ciclo||"—"} · vem da aba Planejamento, atualiza sozinho</div></div>`)}
@@ -2077,17 +2156,19 @@ async function svcPatchRemote(patch){
     if(error)console.error("SVC save",error);
   },650);
 }
+const svcPlanSync=(ok,err)=>{window.__svcPlanSync={ok,err:err||"",at:new Date().toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})};window.dispatchEvent(new Event("svc-plan-sync"))};
 async function svcSavePlanRemote(plan){
   if(svcApplyingRemote)return;
-  try{await svcEnsureSB()}catch(e){return}
-  if(!svcSB)return;
-  const {data}=await svcSB.from("svc_shared_state").select("payload").eq("state_key",SVC_STATE_KEY).maybeSingle();
+  try{await svcEnsureSB()}catch(e){svcPlanSync(false,"sem conexão com a nuvem");return}
+  if(!svcSB){svcPlanSync(false,"sem conexão com a nuvem");return}
+  const {data,error:rErr}=await svcSB.from("svc_shared_state").select("payload").eq("state_key",SVC_STATE_KEY).maybeSingle();
+  if(rErr){console.error("SVC plan read",rErr);svcPlanSync(false,rErr.message||"erro ao ler a nuvem");return}
   const payload={...(data?.payload||{}),plan,updatedAt:new Date().toISOString()};
   const {error}=await svcSB.from("svc_shared_state").upsert(
     {state_key:SVC_STATE_KEY,payload,updated_at:new Date().toISOString()},
     {onConflict:"state_key"}
   );
-  if(error)console.error("SVC plan save",error);
+  if(error){console.error("SVC plan save",error);svcPlanSync(false,error.message||"erro ao salvar")}else svcPlanSync(true);
 }
 function svcCacheRemote(p){
   try{
