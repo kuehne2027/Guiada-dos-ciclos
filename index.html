@@ -28,6 +28,7 @@ body{font-family:Onest,system-ui,sans-serif;min-height:100%;overflow-x:hidden}
 .tnum{font-variant-numeric:tabular-nums}
 button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .spin{animation:spin 6s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+.pulse{animation:pulse 1.2s ease-in-out infinite}@keyframes pulse{50%{opacity:.45}}
 .noscroll::-webkit-scrollbar{display:none}.noscroll{scrollbar-width:none}
 @media (prefers-reduced-motion:reduce){.sk,.spin{animation:none}}
 
@@ -1436,7 +1437,7 @@ const AMX=(()=>{
   function normId(v){let s=String(v??"").trim();if(!s)return "";if(s[0]==="{"){try{const j=JSON.parse(s);s=String(j.id??j.shipment_id??j.ID??s)}catch(e){}}
     s=s.replace(/\s+/g,"");if(/^\d+\.0+$/.test(s))s=s.replace(/\.0+$/,"");return s.toUpperCase()}
   const lsGet=k=>{try{const v=localStorage.getItem("lam_"+k);return v?JSON.parse(v):null}catch(e){return null}};
-  const lsSet=(k,v)=>{let ok=true;try{localStorage.setItem("lam_"+k,JSON.stringify(v))}catch(e){ok=false}if(onStateCb&&(k==="conns"||k==="adText"))onStateCb(k);return ok};
+  const lsSet=(k,v)=>{let ok=true;try{localStorage.setItem("lam_"+k,JSON.stringify(v))}catch(e){ok=false}if(onStateCb&&(k==="conns"||k==="adText"||k==="bips"))onStateCb(k);return ok};
   const IDB={open(){return new Promise((res,rej)=>{try{const q=indexedDB.open("localizador-a-mais",1);q.onupgradeneeded=()=>q.result.createObjectStore("kv");q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error)}catch(e){rej(e)}})},
     async get(k){try{const db=await IDB.open();return await new Promise(r=>{const t=db.transaction("kv").objectStore("kv").get(k);t.onsuccess=()=>r(t.result);t.onerror=()=>r(null)})}catch(e){return null}},
     async set(k,v){try{const db=await IDB.open();return await new Promise(r=>{const tx=db.transaction("kv","readwrite");tx.objectStore("kv").put(v,k);tx.oncomplete=()=>r(true);tx.onerror=()=>r(false)})}catch(e){return false}}};
@@ -1530,7 +1531,8 @@ const AMX=(()=>{
     const w=matches.filter(m=>!m.semRota);if(!w.length)return {st:"sr",matches,connected};return {st:"ok",matches:w,best:w[0],connected}}
   const extractIds=t=>[...new Set(String(t).split(/[\s,;|]+/).map(normId).filter(x=>x&&x.length>=6))];
   function findRoute(name){const l=routeByName.get(rk(name))||[];return l[0]||null}
-  return {compact,replaceSources,onChange:f=>{onChangeCb=f},onState:f=>{onStateCb=f},findRoute,cicloFrom,rebuild,lookup,destLabel,cyclesInfo,planSourcesFromLines,PLAN_LINE,readFile,addSources,load,setExtra,systemPlan,setSourceCiclo,removeSource,clearSources,
+  function allRoutes(){return [...routeIdx.values()]}
+  return {allRoutes,isSaca,compact,replaceSources,onChange:f=>{onChangeCb=f},onState:f=>{onStateCb=f},findRoute,cicloFrom,rebuild,lookup,destLabel,cyclesInfo,planSourcesFromLines,PLAN_LINE,readFile,addSources,load,setExtra,systemPlan,setSourceCiclo,removeSource,clearSources,
     parseAduanaText,parseAduanaAoa,isAmais,analyze,extractIds,layoutOfCiclo,cycSort,SEMC,FIELDS,lsGet,lsSet,isSaca,
     get sources(){return sources},get extra(){return extra},get size(){return idx.size},get routes(){return routeIdx.size}};
 })();
@@ -1578,22 +1580,72 @@ const AMXS=(()=>{
       set({status:"ok",at:hhmm(),err:"",info:""});window.dispatchEvent(new Event("amx-remote"));
       if(extra.length){pulling=false;return markDirty()}}
     catch(e){console.error("A mais · nuvem",e);set({status:"erro",err:errTxt(e),info:""})}finally{pulling=false}}
-  /* ---- conexões + aduana ---- */
-  let estT=null,applying=false;
-  function pushEstado(){if(applying)return;ls("amx-est-dirty","1");clearTimeout(estT);
-    estT=setTimeout(async()=>{try{const at=Date.now();await putRow(EST,{at,conns:AMX.lsGet("conns")||[],adText:AMX.lsGet("adText")||""});ls("amx-est-at",String(at));ls("amx-est-dirty",null)}
-      catch(e){console.error("A mais · nuvem (conexões)",e);set({status:"erro",err:errTxt(e)})}},1200)}
-  async function pullEstado(){try{if(lg("amx-est-dirty"))return pushEstado();const r=await getRow(EST);if(!r)return;
-      if((+r.at||0)>(+lg("amx-est-at")||0)){applying=true;try{AMX.lsSet("conns",r.conns||[]);AMX.lsSet("adText",r.adText||"")}finally{applying=false}
-        ls("amx-est-at",String(r.at));window.dispatchEvent(new Event("amx-remote"))}}
-    catch(e){console.error("A mais · nuvem (conexões)",e)}}
+  /* ---- conexões + aduana + bipagens: cada PC envia só o que mudou e junta com o que os outros fizeram ---- */
+  let estT=null,applying=false,estBusy=null,estAgain=false,estStamp="";
+  const estKeyC=c=>String(c.id||"")+"|"+String(c.rota||"")+"|"+String(c.ciclo||"");
+  const estKeyB=b=>String(b.from||"")+"|"+String(b.id||"");
+  const J=v=>JSON.stringify(v===undefined?null:v);
+  function merge3(base,mine,remote,key){
+    base=Array.isArray(base)?base:[];mine=Array.isArray(mine)?mine:[];remote=Array.isArray(remote)?remote:[];
+    const bm=new Map(base.map(x=>[key(x),x])),mm=new Map(mine.map(x=>[key(x),x])),out=new Map(remote.map(x=>[key(x),x]));
+    new Set([...bm.keys(),...mm.keys()]).forEach(k=>{if(J(bm.get(k))!==J(mm.get(k))){if(mm.has(k))out.set(k,mm.get(k));else out.delete(k)}});
+    return [...out.values()].sort((x,y)=>(+x.t||0)-(+y.t||0));
+  }
+  const getBase=()=>{try{return JSON.parse(lg("amx-est-base")||"null")}catch(e){return null}};
+  const mine=()=>({conns:AMX.lsGet("conns")||[],adText:AMX.lsGet("adText")||"",bips:AMX.lsGet("bips")||[]});
+  function applyEst(r){
+    const cur=mine();
+    const changed=J(cur.conns)!==J(r.conns||[])||J(cur.adText)!==J(r.adText||"")||J(cur.bips)!==J(r.bips||[]);
+    ls("amx-est-base",JSON.stringify({conns:r.conns||[],adText:r.adText||"",bips:r.bips||[]}));
+    if(!changed)return;
+    applying=true;try{AMX.lsSet("conns",r.conns||[]);AMX.lsSet("adText",r.adText||"");AMX.lsSet("bips",r.bips||[])}finally{applying=false}
+    window.dispatchEvent(new Event("amx-remote"));
+  }
+  async function getEstRow(){const c=await sb();const {data,error}=await c.from(T).select("payload,updated_at").eq("state_key",EST).maybeSingle();if(error)throw error;return data||null}
+  function pushEstado(){if(applying)return;ls("amx-est-dirty","1");clearTimeout(estT);estT=setTimeout(syncEstado,500)}
+  function syncEstado(){
+    if(estBusy){estAgain=true;return estBusy}
+    estBusy=(async()=>{try{do{estAgain=false;
+      for(let tent=0;tent<6;tent++){
+        const row=await getEstRow();const r=(row&&row.payload)||{};
+        if(!lg("amx-est-dirty")){if(row){estStamp=row.updated_at||"";applyEst(r)}else if(getBase()===null&&(mine().conns.length||mine().adText||mine().bips.length)){ls("amx-est-dirty","1");continue}break}
+        const base=getBase()||{conns:[],adText:"",bips:[]};const m=mine();
+        const merged={at:Date.now(),
+          conns:merge3(base.conns,m.conns,row?r.conns:[],estKeyC),
+          bips:merge3(base.bips,m.bips,row?r.bips:[],estKeyB).slice(-1500),
+          adText:J(m.adText)!==J(base.adText||"")?m.adText:(row?(r.adText||""):m.adText)};
+        const now=new Date().toISOString();const c=await sb();let ok=false;
+        if(row&&row.updated_at){const u=await c.from(T).update({payload:merged,updated_at:now}).eq("state_key",EST).eq("updated_at",row.updated_at).select("state_key");
+          if(u.error)throw u.error;ok=!!(u.data&&u.data.length);
+          if(!ok&&tent<5){await new Promise(z=>setTimeout(z,80+Math.random()*300));continue}
+          if(!ok){await putRow(EST,merged);ok=true}}
+        else{const ins=await c.from(T).insert({state_key:EST,payload:merged,updated_at:now});
+          if(ins.error){if(String(ins.error.code)==="23505"&&tent<5){await new Promise(z=>setTimeout(z,80+Math.random()*300));continue}throw ins.error}ok=true}
+        ls("amx-est-dirty",null);estStamp=now;ls("amx-est-at",String(merged.at));applyEst(merged);break}
+      set({status:"ok",at:hhmm(),err:""})}while(estAgain)}
+    catch(e){console.error("A mais · nuvem (conexões)",e);set({status:"erro",err:errTxt(e)});clearTimeout(estT);estT=setTimeout(syncEstado,5000)}
+    finally{estBusy=null}})();
+    return estBusy}
+  async function pullEstado(){return syncEstado()}
+  /* checagem leve: só baixa se algo mudou na nuvem */
+  async function quickCheck(){
+    try{if(lg("amx-est-dirty"))return syncEstado();
+      const c=await sb();const {data,error}=await c.from(T).select("state_key,updated_at").in("state_key",[IDX,EST]);if(error)throw error;
+      const st=Object.fromEntries((data||[]).map(x=>[x.state_key,x.updated_at]));
+      if((st[EST]||"")!==estStamp)await syncEstado();
+      if((st[IDX]||"")!==(lg("amx-idx-stamp")||"")){await pullBases();if(st[IDX])ls("amx-idx-stamp",st[IDX])}}
+    catch(e){console.error("A mais · checagem",e)}}
   /* ---- liga tudo ---- */
   let started=false,ch=null;
-  async function sync(){await pullBases();await pullEstado()}
+  async function sync(){await pullBases();await syncEstado()}
   function start(){if(started)return sync();started=true;AMX.onChange(markDirty);AMX.onState(pushEstado);
-    document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")sync()});
-    setInterval(()=>{if(document.visibilityState==="visible")sync()},60000);
-    sb().then(c=>{ch=c.channel("amx-shared").on("postgres_changes",{event:"*",schema:"public",table:T,filter:"state_key=in.("+IDX+","+EST+")"},()=>setTimeout(sync,800)).subscribe()}).catch(()=>{});
+    document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")quickCheck()});
+    window.addEventListener("focus",()=>quickCheck());window.addEventListener("online",()=>sync());
+    setInterval(()=>{if(document.visibilityState==="visible")quickCheck()},6000);
+    const sub=()=>sb().then(c=>{if(ch){try{c.removeChannel(ch)}catch(e){}}
+      ch=c.channel("amx-shared-"+Math.random().toString(36).slice(2,8)).on("postgres_changes",{event:"*",schema:"public",table:T,filter:"state_key=in.("+IDX+","+EST+")"},()=>setTimeout(quickCheck,150))
+        .subscribe(s=>{if(s==="CHANNEL_ERROR"||s==="TIMED_OUT")setTimeout(sub,5000)})}).catch(()=>{});
+    sub();
     return sync()}
   return {start,sync,pushBases,subscribe:f=>{subs.add(f);f({...st});return()=>subs.delete(f)},get state(){return {...st}}};
 })();
@@ -1695,6 +1747,47 @@ function MatchCard({m,layoutOf,conns,onConnect,onCopy,goVaga,from}){
     </div>
   </${motion.div}>`}
 
+/* ===== Filtro de gaiolas: B1, C10… separadas de VUC (começa com V) e GM ===== */
+/* VUC = gaiola com 2 letras começando com V (VA1, VB12…); 1 letra só (A1, B1, C10, V1…) = esteira GM */
+const amIsVG=t=>{const m=String(t||"").trim().toUpperCase().match(/^([A-Z]+)/);return !!m&&m[1].length===2&&m[1][0]==="V"};
+/* área da aduana: pela gaiola da rota auditada (onde deu o a mais); se não souber, pela rota correta */
+function amArea(a,r){let lb="";const rt=a&&a.rota?AMX.findRoute(a.rota):null;
+  if(rt)lb=rt.gaiola&&!AMX.isSaca(rt.gaiola)?rt.gaiola:rt.rota;if(!lb&&a)lb=a.rota||"";
+  if(!lb&&r&&r.best)lb=AMX.destLabel(r.best);return amIsVG(lb)?"vuc":"gm"}
+const AM_AREAS={vuc:{t:"VUC",d:"volumosos",c:"#4cc3ff",bg:"rgba(76,195,255,.12)"},gm:{t:"GM",d:"pacotes pequenos",c:"#c4a7ff",bg:"rgba(167,139,250,.12)"}};
+function AmOrigPicker({typed,onPick,ver}){
+  const [grp,setGrpRaw]=useState(()=>AMX.lsGet("pickGrp")||"todas");const setGrp=v=>{setGrpRaw(v);AMX.lsSet("pickGrp",v)};
+  const [open,setOpenRaw]=useState(()=>AMX.lsGet("pickOpen")!==false);const setOpen=v=>{setOpenRaw(v);AMX.lsSet("pickOpen",v)};
+  const all=useMemo(()=>{const m=new Map();
+    AMX.allRoutes().forEach(rt=>{if(rt.gaiola&&AMX.isSaca(rt.gaiola))return;const lb=String(rt.gaiola||rt.rota||"").trim().toUpperCase();if(!lb)return;
+      if(!m.has(lb))m.set(lb,{lb,ciclo:rt.ciclo||"",transp:rt.transp||"",rota:rt.rota||""})});
+    return [...m.values()].sort((a,b)=>a.lb.localeCompare(b.lb,"pt",{numeric:true}))},[ver]);
+  const cics=useMemo(()=>[...new Set(all.map(x=>x.ciclo).filter(Boolean))].sort(AMX.cycSort),[all]);
+  const [cic,setCicRaw]=useState(()=>AMX.lsGet("pickCic")||"");const setCic=v=>{setCicRaw(v);AMX.lsSet("pickCic",v)};
+  const cicOk=cic&&cics.includes(cic)?cic:"";
+  if(!all.length)return null;
+  const q=normTxt(typed||"");
+  const base=all.filter(x=>(!cicOk||x.ciclo===cicOk)&&(!q||normTxt(x.lb).includes(q)||normTxt(x.rota).includes(q)));
+  const gai=base.filter(x=>!amIsVG(x.lb)),vg=base.filter(x=>amIsVG(x.lb));
+  const pill=(id,t,n)=>html`<button key=${id} type="button" onClick=${()=>setGrp(id)} class=${"px-2.5 py-1 rounded-full text-[11px] font-medium "+(grp===id?"text-[#1b1300]":"text-muted hover:text-ink bg-white/[.04]")} style=${grp===id?{background:"var(--amber)"}:null}>${t} <span class="font-mono opacity-70">${n}</span></button>`;
+  const chips=(list,tone)=>list.length?html`<div class="flex flex-wrap gap-1 max-h-40 overflow-y-auto pr-1">${list.map(x=>html`<button key=${x.lb} type="button" title=${(x.rota&&x.rota!==x.lb?"Rota "+x.rota+" · ":"")+(x.transp||"")+(x.ciclo?" · "+x.ciclo:"")}
+      onClick=${()=>onPick(x.lb)} class="font-mono text-[11px] px-2 py-1 rounded-lg border hover:brightness-125"
+      style=${tone==="vg"?{background:"rgba(76,195,255,.1)",borderColor:"rgba(76,195,255,.35)",color:"var(--accent)"}:{background:"rgba(255,255,255,.04)",borderColor:"rgba(255,255,255,.08)"}}>${x.lb}</button>`)}</div>`
+    :html`<div class="text-xs text-muted py-1">Nenhuma ${tone==="vg"?"VUC":"GM"}${q?" com “"+typed.trim().toUpperCase()+"”":""}.</div>`;
+  const sec=(title,list,tone)=>html`<div class="mt-2"><div class="text-[10px] uppercase tracking-[.14em] font-semibold mb-1" style=${{color:tone==="vg"?"var(--accent)":"var(--muted)"}}>${title} <span class="font-mono">${list.length}</span></div>${chips(list,tone)}</div>`;
+  return html`<div class="mt-3 rounded-xl border border-line bg-black/10 p-2.5">
+    <div class="flex flex-wrap items-center gap-1.5">
+      <span class="text-[10px] uppercase tracking-[.14em] text-muted font-semibold mr-1">Filtro</span>
+      ${pill("todas","Todas",gai.length+vg.length)}${pill("gaiolas","GM",gai.length)}${pill("vg","VUC",vg.length)}
+      ${cics.length>1&&html`<select value=${cicOk} onChange=${e=>setCic(e.target.value)} aria-label="Ciclo" class="ml-auto bg-white/5 border border-line rounded-lg px-2 py-1 text-[11px] text-ink">
+        <option value="">Todos os ciclos</option>${cics.map(c=>html`<option key=${c} value=${c}>${c}</option>`)}</select>`}
+      <button type="button" onClick=${()=>setOpen(!open)} class=${"text-[11px] text-muted hover:text-ink "+(cics.length>1?"":"ml-auto")}>${open?"Esconder":"Mostrar"}</button>
+    </div>
+    ${open&&html`<div>
+      ${grp!=="vg"&&sec("GM · esteira, pacotes pequenos (1 letra: B1, C10…)",gai,"g")}
+      ${grp!=="gaiolas"&&sec("VUC · volumosos (2 letras com V: VA1, VB2…)",vg,"vg")}
+    </div>`}
+  </div>`}
 function AMaisView({layoutOf,goVaga}){
   const [tab,setTabRaw]=useState(()=>AMX.lsGet("tab")||"localizar");const setTab=t=>{setTabRaw(t);AMX.lsSet("tab",t)};
   const [loading,setLoading]=useState(true);const [ver,setVer]=useState(0);const bump=()=>setVer(v=>v+1);
@@ -1706,7 +1799,7 @@ function AMaisView({layoutOf,goVaga}){
   const [hist,setHist]=useState(()=>AMX.lsGet("hist")||[]);
   const [conns,setConnsRaw]=useState(()=>AMX.lsGet("conns")||[]);const setConns=c=>{setConnsRaw(c);AMX.lsSet("conns",c)};
   const [adText,setAdText]=useState(()=>AMX.lsGet("adText")||"");const [aduana,setAduana]=useState([]);const [estSel,setEstSel]=useState(null);
-  const [adSt,setAdSt]=useState("");const [adGroup,setAdGroup]=useState("dest");
+  const [adSt,setAdSt]=useState("");const [adArea,setAdAreaRaw]=useState(()=>AMX.lsGet("adArea")||"todas");const setAdArea=v=>{setAdAreaRaw(v);AMX.lsSet("adArea",v)};const [adGroup,setAdGroup]=useState("dest");
   const [msg,setMsg]=useState("");const [busy,setBusy]=useState(false);const [drag,setDrag]=useState(false);const [planTxt,setPlanTxt]=useState("");
   const [cxQ,setCxQ]=useState("");const [clearAsk,setClearAsk]=useState(false);
   useEffect(()=>{if(!msg)return;const t=setTimeout(()=>setMsg(""),3200);return()=>clearTimeout(t)},[msg]);
@@ -1714,7 +1807,7 @@ function AMaisView({layoutOf,goVaga}){
   const [cloud,setCloud]=useState(()=>AMXS.state);
   useEffect(()=>{AMX.setExtra(AMX.systemPlan());AMX.load().then(()=>{setLoading(false);bump();const t=AMX.lsGet("adText");if(t)applyAduana(AMX.parseAduanaText(t));AMXS.start()})},[]);
   useEffect(()=>AMXS.subscribe(setCloud),[]);
-  useEffect(()=>{const fn=()=>{setConnsRaw(AMX.lsGet("conns")||[]);const t=AMX.lsGet("adText")||"";setAdText(t);if(t)applyAduana(AMX.parseAduanaText(t));else{setAduana([]);setEstSel(null)}bump()};
+  useEffect(()=>{const fn=()=>{setConnsRaw(AMX.lsGet("conns")||[]);setBipsRaw(AMX.lsGet("bips")||[]);const t=AMX.lsGet("adText")||"";setAdText(t);if(t)applyAduana(AMX.parseAduanaText(t));else{setAduana([]);setEstSel(null)}bump()};
     window.addEventListener("amx-remote",fn);return()=>window.removeEventListener("amx-remote",fn)},[]);
   const copy=(t,ok)=>{try{navigator.clipboard.writeText(t).then(()=>setMsg(ok||"Copiado. Cole no Excel.")).catch(()=>setMsg("Não deu para copiar aqui."))}catch(e){setMsg("Não deu para copiar aqui.")}};
   const mkConn=(m,from,p,a)=>{p=p||amPlace(m,layoutOf);const op=from?amOrigin(from,layoutOf):null;return {fromResp:(a&&a.rep)|| (op?respNames(op.resp):""),fromVaga:op&&op.vaga||"",motorista:(a&&a.motorista)||"",placa:(a&&a.placa)||"",dataAduana:(a&&a.data)||"",resp:respNames(amResp(p)),id:m.id,t:Date.now(),from:from||"",ciclo:m.ciclo,rota:m.rota,gaiola:AMX.destLabel(m),sigla:m.sigla,transp:m.transp,onda:m.onda,parada:m.parada,lk:p&&p.lk||"",vaga:p&&p.vaga||"",rua:amRuaTxt(p)}};
@@ -1741,7 +1834,8 @@ function AMaisView({layoutOf,goVaga}){
     AMX.addSources(add,true);setPlanTxt("");bump();setMsg(`${add.reduce((a,s)=>a+s.rows.length,0)} rotas lidas · ${add.map(a=>a.ciclo).join(", ")}${bad?" · "+bad+" linha(s) ignorada(s)":""}`)};
 
   const ci=useMemo(()=>AMX.cyclesInfo(),[ver]);const cyc=Object.keys(ci).sort(AMX.cycSort);
-  const adRows=useMemo(()=>aduana.filter(a=>estSel&&estSel.has(a.estado)).map(a=>({a,r:AMX.analyze(a,conns)})),[aduana,estSel,conns,ver]);
+  const adRowsAll=useMemo(()=>aduana.filter(a=>estSel&&estSel.has(a.estado)).map(a=>{const r=AMX.analyze(a,conns);return {a,r,area:amArea(a,r)}}),[aduana,estSel,conns,ver]);
+  const adRows=adArea==="todas"?adRowsAll:adRowsAll.filter(x=>x.area===adArea);
   const adShown=adRows.filter(({r})=>!adSt||(adSt==="cx"?!!r.connected:r.st===adSt));
   const pend=adRows.filter(x=>x.r.st==="ok"&&!x.r.connected).length;
   const segBtn=(id,t,n)=>html`<${motion.button} key=${id} ...${tactile} type="button" onClick=${()=>setTab(id)} class=${"relative px-3.5 py-1.5 rounded-full text-[12px] font-medium "+(tab===id?"text-[#1b1300]":"text-muted hover:text-ink")}>
@@ -1784,6 +1878,7 @@ function AMaisView({layoutOf,goVaga}){
               <label class="text-[11px] text-muted flex flex-col gap-1" for="amQtd">Qtd. a mais
                 <input id="amQtd" type="number" min="0" inputmode="numeric" value=${qtd} onInput=${e=>setQtd(e.target.value)} onKeyDown=${e=>{if(e.key==="Enter"){e.preventDefault();document.getElementById("amInp")?.focus()}}} placeholder="0" class="bg-white/5 border border-line rounded-xl px-3 py-2 font-mono text-base text-ink tnum outline-none focus:border-[var(--amber)]"/></label>
             </div>
+            <${AmOrigPicker} typed=${orig} ver=${ver} onPick=${v=>{setOrig(v);setTimeout(()=>document.getElementById("amQtd")?.focus(),0)}}/>
             ${o&&html`<div class="mt-3 rounded-xl px-3 py-2.5 flex items-center gap-3" style=${{background:origP&&origP.resp.length?"rgba(255,181,71,.12)":"rgba(255,255,255,.04)"}}>
               <span class="w-9 h-9 shrink-0 rounded-full flex items-center justify-center font-display text-sm" style=${{background:origP&&origP.resp.length?"var(--amber)":"rgba(255,255,255,.08)",color:origP&&origP.resp.length?"#1b1300":"var(--muted)"}}>${origP&&origP.resp.length?String(origP.resp[0].nome).trim().slice(0,1).toUpperCase():"?"}</span>
               <div class="min-w-0"><div class="text-[10px] uppercase tracking-[.14em] text-muted font-semibold">Aduana feita por</div>
@@ -1840,10 +1935,23 @@ function AMaisView({layoutOf,goVaga}){
   } else if(tab==="aduana"){
     const est={};aduana.forEach(a=>est[a.estado]=(est[a.estado]||0)+1);
     const cnt={ok:0,same:0,sr:0,nf:0};adRows.forEach(x=>cnt[x.r.st]++);
-    const groups={};adShown.forEach(x=>{let k;if(adGroup==="none")k="";else if(adGroup==="dest"){const m=x.r.best;k=x.r.st==="ok"?m.ciclo+"|"+AMX.destLabel(m)+"|"+m.sigla:"~|"+amStTone[x.r.st][0]}else k=(x.a.rota||"Sem rota informada")+"|"+(x.a.placa||"");(groups[k]=groups[k]||[]).push(x)});
+    const groups={};adShown.forEach(x=>{let k;const apf=adArea==="todas"?(x.area==="vuc"?"0vuc§":"1gm§"):"";if(adGroup==="none")k="";else if(adGroup==="dest"){const m=x.r.best;k=x.r.st==="ok"?m.ciclo+"|"+AMX.destLabel(m)+"|"+m.sigla:"~|"+amStTone[x.r.st][0]}else k=(x.a.rota||"Sem rota informada")+"|"+(x.a.placa||"");k=apf+k;(groups[k]=groups[k]||[]).push(x)});
     const table=()=>adShown.map(({a,r})=>{const m=r.best||r.matches[0]||{};const p=r.st==="ok"?amPlace(m,layoutOf):null;return {"ID do pacote":a.id,"Rota auditada":a.rota,Placa:a.placa,Estado:a.estado,"Situação":amStTone[r.st][0],Transportadora:r.st==="ok"?(CARRIERS[m.sigla]?.n||m.transp):"","Rota correta":r.st==="ok"?AMX.destLabel(m):"",Layout:p&&p.lk||"",Vaga:p&&p.vaga||"",Rua:r.st==="ok"?amRuaTxt(p):"",Ciclo:m.ciclo||"",Conectado:r.connected?"Sim":""}});
     const tsv=rows=>[Object.keys(rows[0]).join("\t"),...rows.map(o=>Object.values(o).join("\t"))].join("\n");
+    const areaN={vuc:adRowsAll.filter(x=>x.area==="vuc").length,gm:adRowsAll.filter(x=>x.area==="gm").length};
+    const areaPend=k=>adRowsAll.filter(x=>x.area===k&&x.r.st==="ok"&&!x.r.connected).length;
+    const areaBtn=(id,t,sub,n,c,bg)=>html`<${motion.button} key=${id} ...${tactile} type="button" onClick=${()=>setAdArea(id)} class="flex-1 min-w-[150px] text-left rounded-2xl border px-4 py-3"
+        style=${adArea===id?{background:bg,borderColor:c}:{background:"rgba(255,255,255,.03)",borderColor:"rgba(255,255,255,.08)"}}>
+        <div class="flex items-baseline justify-between gap-2"><span class="font-display text-xl" style=${{color:adArea===id?c:"var(--ink)"}}>${t}</span><span class="font-mono tnum text-lg">${n}</span></div>
+        <div class="text-xs text-muted">${sub}</div></${motion.button}>`;
+    const areaBar=html`<${Card} className="col-span-2 md:col-span-12" title="Área da aduana" right=${html`<span class="text-xs text-muted">cada PC guarda a sua área</span>`}>
+      <div class="flex flex-wrap gap-2">
+        ${areaBtn("vuc","VUC","Volumosos · gaiola com 2 letras começando com V"+(areaPend("vuc")?" · "+areaPend("vuc")+" pendentes":""),areaN.vuc,AM_AREAS.vuc.c,AM_AREAS.vuc.bg)}
+        ${areaBtn("gm","GM","Esteira · pacotes pequenos · gaiola com 1 letra (B1, C10…)"+(areaPend("gm")?" · "+areaPend("gm")+" pendentes":""),areaN.gm,AM_AREAS.gm.c,AM_AREAS.gm.bg)}
+        ${areaBtn("todas","Todas","As duas áreas, separadas",areaN.vuc+areaN.gm,"var(--amber)","rgba(255,181,71,.1)")}
+      </div></${Card}>`;
     body=html`
+      ${areaBar}
       <${Card} className="col-span-2 md:col-span-7" title="Cole os dados da aduana" right=${html`<label for="amAdFile" class="cursor-pointer text-xs font-medium px-3 py-1.5 rounded-full border border-white/20">Abrir CSV</label>`}>
         <input id="amAdFile" type="file" accept=".csv,.txt,.tsv,.xlsx,.xls,.xlsm" class="sr-only" onChange=${async e=>{const f=e.target.files[0];e.target.value="";if(!f)return;
           try{if(/\.xls[xmb]?$/i.test(f.name)){const wb=await svcReadWorkbook(f);let aoa=[];for(const sn of wb.SheetNames){const a=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:"",raw:false,blankrows:false});if(a.length>1){aoa=a;break}}
@@ -1872,10 +1980,11 @@ function AMaisView({layoutOf,goVaga}){
           <${motion.button} ...${tactile} type="button" onClick=${()=>{const t=table();if(!t.length)return setMsg("Nada para copiar");copy(tsv(t),t.length+" linhas copiadas. Cole no Excel.")}} class=${amBtn+" border border-white/20"}>Copiar</${motion.button}></div>`}>
         <div class="overflow-x-auto -mx-1"><table class="w-full min-w-[860px] text-sm">
           <thead><tr class="text-left text-[11px] uppercase tracking-[.14em] text-muted"><th class="py-2 px-2 font-semibold">ID do pacote</th><th class="py-2 px-2 font-semibold">Estava em</th><th class="py-2 px-2 font-semibold">Rota correta</th><th class="py-2 px-2 font-semibold">Vaga · Rua</th><th class="py-2 px-2 font-semibold">Ciclo</th><th class="py-2 px-2 font-semibold">Situação</th><th></th></tr></thead>
-          <tbody>${Object.keys(groups).sort((a,b)=>a.localeCompare(b,"pt",{numeric:true})).map(k=>{const list=groups[k];const pp=k.split("|");const first=list[0];
+          <tbody>${(()=>{let lastA="";return Object.keys(groups).sort((a,b)=>a.localeCompare(b,"pt",{numeric:true})).map(k=>{const list=groups[k];const ak=k.includes("§")?k.split("§")[0].slice(1):"";const pp=(k.includes("§")?k.split("§")[1]:k).split("|");const first=list[0];
+            const areaRow=ak&&ak!==lastA?(()=>{lastA=ak;const A=AM_AREAS[ak];const n=adShown.filter(x=>x.area===ak).length;return html`<tr key=${"a"+ak}><td colspan="7" class="pt-5 pb-2 px-2"><div class="flex items-center gap-2 rounded-xl px-3 py-2" style=${{background:A.bg}}><span class="font-display text-base" style=${{color:A.c}}>${A.t}</span><span class="text-xs text-muted">${A.d} · ${plural(n,"pacote","pacotes")}</span></div></td></tr>`})():null;
             const fm=first.r.best;const fpl=first.r.st==="ok"?amPlace(fm,layoutOf):null;
             const title=adGroup==="none"?null:adGroup==="dest"?(pp[0]==="~"?html`<span class="text-muted">${pp[1]}</span>`:html`<span class="inline-flex flex-wrap items-center gap-2"><${AmChip} k=${pp[2]}/>Levar para <b class="font-mono">${pp[1]}</b><span class="text-muted">${fpl&&fpl.vaga?"· vaga "+fpl.vaga+" · Rua "+fpl.rua:"· "+amRuaTxt(fpl)}</span><span class="font-mono text-[10px] px-1.5 py-0.5 rounded-md bg-white/10">${pp[0]}</span></span>`):html`Aduana da rota <b class="font-mono">${pp[0]}</b>${pp[1]?html` <span class="text-muted">· placa ${pp[1]}</span>`:""}`;
-            return html`${title&&html`<tr key=${"g"+k} class="border-t border-line bg-white/[.03]"><td colspan="7" class="py-2.5 px-2 font-semibold">${title} <span class="text-muted font-normal">· ${plural(list.length,"pacote","pacotes")}</span></td></tr>`}
+            return html`${areaRow}${title&&html`<tr key=${"g"+k} class="border-t border-line bg-white/[.03]"><td colspan="7" class="py-2.5 px-2 font-semibold">${title} <span class="text-muted font-normal">· ${plural(list.length,"pacote","pacotes")}</span></td></tr>`}
               ${list.map(({a,r})=>{const m=r.best||r.matches[0];const p=r.st==="ok"?amPlace(m,layoutOf):null;
                 return html`<tr key=${a.id+k} class="border-t border-line/60">
                   <td class="py-2 px-2 font-mono tnum"><button type="button" class="hover:text-accent" onClick=${()=>{setQ({ids:[a.id]});setTab("localizar")}}>${a.id}</button></td>
@@ -1884,7 +1993,7 @@ function AMaisView({layoutOf,goVaga}){
                   <td class="py-2 px-2 whitespace-nowrap">${p?(p.vaga?html`<span class="font-mono font-bold px-1.5 py-0.5 rounded" style=${{background:"var(--accent)",color:"#04121b"}}>V${p.vaga}</span> Rua ${p.rua}`:amRuaTxt(p)):"—"}${p&&amResp(p).length?html`<div class="text-xs font-semibold mt-0.5" style=${{color:"var(--accent)"}}>${respNames(amResp(p))}</div>`:""}</td>
                   <td class="py-2 px-2">${m?html`<span class="font-mono text-[11px] px-1.5 py-0.5 rounded-md bg-white/10">${m.ciclo}</span>`:"—"}</td>
                   <td class="py-2 px-2"><${AmTag} st=${r.st}/></td>
-                  <td class="py-2 px-2 text-right">${r.st==="ok"&&html`<${motion.button} ...${tactile} type="button" onClick=${()=>connect(m,a.rota,p,a)} class="text-xs font-semibold px-3 py-1.5 rounded-full" style=${r.connected?{background:"rgba(52,211,153,.14)",color:"#5ee6b0"}:{background:"var(--amber)",color:"#1b1300"}}>${r.connected?"✓ Conectado":"Conectar"}</${motion.button}>`}</td></tr>`})}`})}
+                  <td class="py-2 px-2 text-right">${r.st==="ok"&&html`<${motion.button} ...${tactile} type="button" onClick=${()=>connect(m,a.rota,p,a)} class="text-xs font-semibold px-3 py-1.5 rounded-full" style=${r.connected?{background:"rgba(52,211,153,.14)",color:"#5ee6b0"}:{background:"var(--amber)",color:"#1b1300"}}>${r.connected?"✓ Conectado":"Conectar"}</${motion.button}>`}</td></tr>`})}`})})()}
             ${!adShown.length&&html`<tr><td colspan="7" class="py-6 px-2 text-muted">${aduana.length?"Nenhuma linha com esse filtro.":"Cole a tabela da aduana e toque em Analisar a mais."}</td></tr>`}</tbody></table></div>
       </${Card}>`;
   } else if(tab==="relatorio"){
@@ -1928,11 +2037,19 @@ function AMaisView({layoutOf,goVaga}){
   } else if(tab==="conexoes"){
     const qq=normTxt(cxQ);const list=conns.filter(c=>!qq||[c.id,c.rota,c.gaiola,c.rua,c.from,c.ciclo,String(c.vaga)].some(v=>normTxt(v).includes(qq))).slice().reverse();
     const rows=()=>list.map(c=>({Hora:new Date(c.t).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}),"ID do pacote":c.id,"Rota onde está":c.from||"","Aduana feita por":c.fromResp||"",Transportadora:CARRIERS[c.sigla]?.n||c.transp,"Rota correta":c.rota||"","Gaiola correta":c.gaiola||"","Layout":c.lk,Vaga:c.vaga,Rua:c.rua,"Responsável":c.resp||"",Onda:c.onda,Parada:c.parada,Ciclo:c.ciclo}));
-    body=html`<${Card} className="col-span-2 md:col-span-12" title="Pacotes conectados à rota certa" right=${html`<div class="flex flex-wrap items-center gap-2">
-        <input value=${cxQ} onInput=${e=>setCxQ(e.target.value)} placeholder="Buscar ID, rota, rua" aria-label="Buscar conexões" class="bg-white/5 border border-line rounded-lg px-3 py-1.5 text-xs text-ink outline-none focus:border-[var(--accent)]"/>
-        <${motion.button} ...${tactile} type="button" onClick=${()=>{const r=rows();if(!r.length)return setMsg("Nada para copiar");copy([Object.keys(r[0]).join("\t"),...r.map(o=>Object.values(o).join("\t"))].join("\n"),r.length+" linhas copiadas. Cole no Excel.")}} class=${amBtn+" bg-white text-black"}>Copiar para Excel</${motion.button}>
-        <${motion.button} ...${tactile} type="button" onClick=${()=>{if(!clearAsk){setClearAsk(true);setTimeout(()=>setClearAsk(false),3500);return}setConns([]);setClearAsk(false);setMsg("Conexões apagadas")}} class=${amBtn+" border"} style=${clearAsk?{background:"#e5262a",color:"#fff",borderColor:"#e5262a"}:{borderColor:"rgba(229,38,42,.6)",color:"#ff8a8c"}}>${clearAsk?"Toque de novo para apagar":"Limpar tudo"}</${motion.button}></div>`}>
-      <div class="overflow-x-auto -mx-1"><table class="w-full min-w-[1120px] text-sm">
+    const isVucLbl=lb=>{if(!lb)return false;const rt=AMX.findRoute(lb);const g=rt&&rt.gaiola&&!AMX.isSaca(rt.gaiola)?rt.gaiola:"";return amIsVG(g)||amIsVG(lb)};
+    const destVuc=c=>isVucLbl(c.gaiola)||isVucLbl(c.rota);
+    const alertOf=c=>!destVuc(c)&&isVucLbl(c.from);
+    const cxRow=c=>html`<tr key=${c.id} class="border-t border-line" style=${alertOf(c)?{background:"rgba(229,38,42,.08)"}:null}>
+          <td class="py-2 px-2 font-mono text-xs tnum">${new Date(c.t).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}</td><td class="py-2 px-2 font-mono tnum">${c.id}${alertOf(c)&&html`<div class="text-[10px] font-sans font-semibold mt-0.5" style=${{color:"#ff8a8c"}}>⚠ esteira no VUC</div>`}</td>
+          <td class="py-2 px-3 rounded-lg" style=${{background:"rgba(255,181,71,.07)"}}><div class="text-[9px] uppercase tracking-[.12em] text-muted">Está agora</div><span class="font-mono font-bold text-base" style=${{color:"var(--amber)"}}>${c.from||"—"}</span>${c.fromResp&&html`<div class="text-xs font-semibold text-muted">${c.fromResp}${c.fromVaga?" · V"+c.fromVaga:""}</div>`}</td><td class="py-2 px-2"><span class="inline-flex items-center gap-2"><${AmChip} k=${c.sigla}/>${CARRIERS[c.sigla]?.n||c.transp||""}</span></td>
+          <td class="py-2 px-2 font-mono font-bold" style=${{color:"#5ee6b0"}}>${c.rota||"—"}</td>
+          <td class="py-2 px-2 font-mono font-bold" style=${{color:"var(--accent)"}}>${c.gaiola||"—"}</td>
+          <td class="py-2 px-2">${c.vaga?html`<button type="button" onClick=${()=>goVaga(c.lk,+c.vaga)} class="font-mono font-bold px-1.5 py-0.5 rounded" style=${{background:"var(--accent)",color:"#04121b"}}>V${c.vaga}</button>`:"—"}</td>
+          <td class="py-2 px-2 whitespace-nowrap">${c.rua||"—"}</td><td class="py-2 px-2 font-semibold">${c.resp||(c.lk?respNames(c.vaga?respOfVaga(c.lk,+c.vaga):[]):"")||"—"}</td><td class="py-2 px-2">${c.onda?String(c.onda).replace(/^onda\s*/i,"Onda "):"—"}</td>
+          <td class="py-2 px-2"><span class="font-mono text-[11px] px-1.5 py-0.5 rounded-md bg-white/10">${c.ciclo}</span></td>
+          <td class="py-2 px-2 text-right"><button type="button" aria-label=${"Desconectar "+c.id} onClick=${()=>setConns(conns.filter(x=>x!==c))} class="text-muted hover:text-[#ff8a8c] px-2">×</button></td></tr>`;
+    const cxTable=(L,empty)=>html`      <div class="overflow-x-auto -mx-1"><table class="w-full min-w-[1120px] text-sm">
         <thead>
           <tr class="text-left text-[10px] uppercase tracking-[.16em]">
             <th colspan="2" class="py-2 px-2 text-muted"></th>
@@ -1942,16 +2059,23 @@ function AMaisView({layoutOf,goVaga}){
           </tr>
           <tr class="text-left text-[11px] uppercase tracking-[.14em] text-muted">${["Hora","ID do pacote","Rota atual","Transportadora","Rota correta","Gaiola correta","Vaga correta","Rua correta","Responsável","Onda","Ciclo",""].map(h=>html`<th key=${h} class="py-2 px-2 font-semibold">${h}</th>`)}</tr>
         </thead>
-        <tbody>${list.map(c=>html`<tr key=${c.id} class="border-t border-line">
-          <td class="py-2 px-2 font-mono text-xs tnum">${new Date(c.t).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}</td><td class="py-2 px-2 font-mono tnum">${c.id}</td>
-          <td class="py-2 px-3 rounded-lg" style=${{background:"rgba(255,181,71,.07)"}}><div class="text-[9px] uppercase tracking-[.12em] text-muted">Está agora</div><span class="font-mono font-bold text-base" style=${{color:"var(--amber)"}}>${c.from||"—"}</span>${c.fromResp&&html`<div class="text-xs font-semibold text-muted">${c.fromResp}${c.fromVaga?" · V"+c.fromVaga:""}</div>`}</td><td class="py-2 px-2"><span class="inline-flex items-center gap-2"><${AmChip} k=${c.sigla}/>${CARRIERS[c.sigla]?.n||c.transp||""}</span></td>
-          <td class="py-2 px-2 font-mono font-bold" style=${{color:"#5ee6b0"}}>${c.rota||"—"}</td>
-          <td class="py-2 px-2 font-mono font-bold" style=${{color:"var(--accent)"}}>${c.gaiola||"—"}</td>
-          <td class="py-2 px-2">${c.vaga?html`<button type="button" onClick=${()=>goVaga(c.lk,+c.vaga)} class="font-mono font-bold px-1.5 py-0.5 rounded" style=${{background:"var(--accent)",color:"#04121b"}}>V${c.vaga}</button>`:"—"}</td>
-          <td class="py-2 px-2 whitespace-nowrap">${c.rua||"—"}</td><td class="py-2 px-2 font-semibold">${c.resp||(c.lk?respNames(c.vaga?respOfVaga(c.lk,+c.vaga):[]):"")||"—"}</td><td class="py-2 px-2">${c.onda?String(c.onda).replace(/^onda\s*/i,"Onda "):"—"}</td>
-          <td class="py-2 px-2"><span class="font-mono text-[11px] px-1.5 py-0.5 rounded-md bg-white/10">${c.ciclo}</span></td>
-          <td class="py-2 px-2 text-right"><button type="button" aria-label=${"Desconectar "+c.id} onClick=${()=>setConns(conns.filter(x=>x!==c))} class="text-muted hover:text-[#ff8a8c] px-2">×</button></td></tr>`)}
-          ${!list.length&&html`<tr><td colspan="12" class="py-6 px-2 text-muted">Nenhum pacote conectado. Conecte pela busca ou pela aduana.</td></tr>`}</tbody></table></div>
+        <tbody>${L.map(cxRow)}
+          ${!L.length&&html`<tr><td colspan="12" class="py-6 px-2 text-muted">${empty}</td></tr>`}</tbody></table></div>`;
+    const lVuc=list.filter(destVuc),lEst=list.filter(c=>!destVuc(c)),lAl=list.filter(alertOf);
+    const secCard=(title,sub,L,tone,empty)=>html`<${Card} className="col-span-2 md:col-span-12" title=${title} right=${html`<span class="text-xs font-semibold px-2.5 py-1 rounded-full" style=${{background:tone.bg,color:tone.c}}>${plural(L.length,"pacote","pacotes")}</span>`}>
+      <div class="text-xs text-muted -mt-1 mb-3">${sub}</div>${cxTable(L,empty)}</${Card}>`;
+    body=html`<${Card} className="col-span-2 md:col-span-12" title="Pacotes conectados à rota certa" right=${html`<div class="flex flex-wrap items-center gap-2">
+        <input value=${cxQ} onInput=${e=>setCxQ(e.target.value)} placeholder="Buscar ID, rota, rua" aria-label="Buscar conexões" class="bg-white/5 border border-line rounded-lg px-3 py-1.5 text-xs text-ink outline-none focus:border-[var(--accent)]"/>
+        <${motion.button} ...${tactile} type="button" onClick=${()=>{const r=rows();if(!r.length)return setMsg("Nada para copiar");copy([Object.keys(r[0]).join("\t"),...r.map(o=>Object.values(o).join("\t"))].join("\n"),r.length+" linhas copiadas. Cole no Excel.")}} class=${amBtn+" bg-white text-black"}>Copiar para Excel</${motion.button}>
+        <${motion.button} ...${tactile} type="button" onClick=${()=>{if(!clearAsk){setClearAsk(true);setTimeout(()=>setClearAsk(false),3500);return}setConns([]);setClearAsk(false);setMsg("Conexões apagadas")}} class=${amBtn+" border"} style=${clearAsk?{background:"#e5262a",color:"#fff",borderColor:"#e5262a"}:{borderColor:"rgba(229,38,42,.6)",color:"#ff8a8c"}}>${clearAsk?"Toque de novo para apagar":"Limpar tudo"}</${motion.button}></div>`}>
+      ${cxTable(list,"Nenhum pacote conectado. Conecte pela busca ou pela aduana.")}
+    </${Card}>
+    ${secCard("VUC · volumosos","Pacotes que pertencem a gaiola VUC (2 letras começando com V).",lVuc,AM_AREAS.vuc,"Nenhum pacote de VUC.")}
+    ${secCard("Esteira · GM","Pacotes que pertencem à esteira (gaiola com 1 letra: B1, C10…).",lEst,AM_AREAS.gm,"Nenhum pacote de esteira.")}
+    <${Card} className="col-span-2 md:col-span-12" title="⚠ Alerta · esteira voando no VUC" right=${html`<span class=${"text-xs font-bold px-2.5 py-1 rounded-full"+(lAl.length?" pulse":"")} style=${{background:lAl.length?"#e5262a":"rgba(255,255,255,.06)",color:lAl.length?"#fff":"var(--muted)"}}>${plural(lAl.length,"pacote","pacotes")}</span>`}>
+      <div class="rounded-2xl border p-3" style=${{borderColor:lAl.length?"rgba(229,38,42,.6)":"rgba(255,255,255,.08)",background:lAl.length?"rgba(229,38,42,.06)":"transparent"}}>
+        <div class="text-xs mb-3" style=${{color:lAl.length?"#ff8a8c":"var(--muted)"}}>Pacote de esteira que estava numa gaiola VUC. Tirar do VUC e levar para a esteira.</div>
+        ${cxTable(lAl,"Nenhum pacote de esteira no VUC.")}</div>
     </${Card}>`;
   } else {
     const srcs=AMX.sources;const cycOpts=[AMX.SEMC,...new Set(["AM","AM1","PM1","PM2","SD","CHP",...srcs.map(s=>s.ciclo).filter(Boolean)])];
@@ -2206,7 +2330,9 @@ function svcSync(){
             setTimeout(svcSync,60+Math.random()*240);return;
           }
           if(r.error||!r.data||!r.data.length){const u=await svcSB.from("svc_shared_state").upsert({state_key:SVC_STATE_KEY,payload:merged,updated_at:merged.updatedAt},{onConflict:"state_key"});error=u.error}
-        }else{const u=await svcSB.from("svc_shared_state").upsert({state_key:SVC_STATE_KEY,payload:merged,updated_at:merged.updatedAt},{onConflict:"state_key"});error=u.error}
+        }else{const u=await svcSB.from("svc_shared_state").insert({state_key:SVC_STATE_KEY,payload:merged,updated_at:merged.updatedAt});
+          if(u.error&&String(u.error.code)==="23505"&&(svcSync._try=(svcSync._try||0)+1)<=4){Object.keys(pend).forEach(k=>{if(!(k in svcPending))svcPending[k]=pend[k]});if(planWasDirty)svcPlanDirty=true;setTimeout(svcSync,60+Math.random()*240);return}
+          error=u.error}
         svcSync._try=0;
         if(error){Object.keys(pend).forEach(k=>{if(!(k in svcPending))svcPending[k]=pend[k]});if(planWasDirty)svcPlanDirty=true;throw error}
         svcLastRemoteAt=merged.updatedAt;
