@@ -1187,7 +1187,7 @@ function BuildBar({cur,onZeroPlan,hasPlan,onApplyRead,onDistribute,goLayout,onGu
 function PlanView({cur,L,setCur,onZero,onApplyRead,onDistribute,goLayout}){
   const [src,setSrc]=useState(()=>{try{const s=JSON.parse(localStorage.getItem("svc-plan2")||"null");if(s&&s.rows)return s;if(s&&s.empty)return null}catch(e){}return parseDefault()});
   useEffect(()=>{
-    const fn=e=>{const v=e.detail;if(v&&v.rows)setSrc(v);else if(v&&v.empty)setSrc(null);else if(v==null)setSrc(parseDefault())};
+    const fn=e=>{const v=e.detail;if(v&&v.rows)setSrc(v);else if(v&&v.empty)setSrc(null);else setSrc(parseDefault())};
     window.addEventListener("svc-plan-remote",fn);
     return()=>window.removeEventListener("svc-plan-remote",fn);
   },[]);
@@ -1218,7 +1218,7 @@ function PlanView({cur,L,setCur,onZero,onApplyRead,onDistribute,goLayout}){
       load(best?best.aoa:[],f.name)}catch(x){console.error(x);setErr("Não consegui ler esse arquivo. Use .xlsx, .xls ou .csv.")}})};
   const onPaste=t=>{const lines=t.replace(/\r/g,"").split("\n").filter(l=>l.trim());if(lines.length<2){setErr("Cole o cabeçalho e pelo menos uma linha.");return}
     const sep=lines.some(l=>l.includes("\t"))?"\t":lines[1].includes(";")?";":",";withSteps(()=>load(lines.map(l=>l.split(sep)),"Planejamento colado"))};
-  const reset=()=>{try{localStorage.removeItem("svc-plan2")}catch(e){}svcSavePlanRemote(null);setErr("");setSrc(parseDefault())};
+  const reset=()=>{const d={def:true,savedAt:Date.now()};try{localStorage.setItem("svc-plan2",JSON.stringify(d))}catch(e){}svcSavePlanRemote(d);setErr("");setSrc(parseDefault())};
 
   const routes=useMemo(()=>src&&(m.rota||m.gaiola)&&m.transp?aggregate(rows,m):[],[src]);
   const ondas=m.onda?[...new Set([1,2,3,4,...routes.map(r=>r.onda).filter(x=>x!=null)])].sort((a,b)=>a-b):[];
@@ -2145,64 +2145,118 @@ async function svcEnsureSB(){
   svcSB=window.supabase.createClient(SVC_SB_URL,SVC_SB_KEY,{realtime:{params:{eventsPerSecond:2}}});
   return svcSB;
 }
-let svcRemoteReady=false, svcSaveTimer=null, svcApplyingRemote=false;
+let svcRemoteReady=false, svcApplyingRemote=false;
 /* o planejamento mais novo sempre ganha: evita que uma cópia antiga do servidor apague o que acabou de ser importado */
 const svcPlanTime=p=>p&&typeof p==="object"&&+p.savedAt||0;
 function svcLocalPlan(){try{return JSON.parse(localStorage.getItem("svc-plan2")||"null")}catch(e){return null}}
-
-function svcSnapshot(edits,tagOv,geos,readAt,respAll){
-  let plan=null;try{plan=JSON.parse(localStorage.getItem("svc-plan2")||"null")}catch(e){}
-  return {edits,tagOv,geos,readAt,respAll,plan,updatedAt:new Date().toISOString()};
+const SVC_MAPS=["edits","tagOv","geos","readAt","respAll"];
+const svcJ=v=>JSON.stringify(v===undefined?null:v);
+/* svcBase = última versão que este PC sabe que está na nuvem (base do merge de 3 vias) */
+let svcBase=null, svcPending={}, svcPlanDirty=false, svcLastRemoteAt="", svcChain=Promise.resolve(), svcPushTimer=null, svcApplier=null;
+const svcStatus={ok:null,at:"",err:""};
+function svcSetStatus(ok,err){svcStatus.ok=ok;svcStatus.err=err||"";if(ok)svcStatus.at=new Date().toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit",second:"2-digit"});svcDrawBadge()}
+function svcDrawBadge(){
+  let el=document.getElementById("svc-sync-badge");
+  if(!el){el=document.createElement("div");el.id="svc-sync-badge";el.title="Clique para sincronizar agora";
+    el.style.cssText="position:fixed;left:10px;bottom:10px;z-index:9999;font:600 11px system-ui,sans-serif;padding:5px 10px;border-radius:999px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.25);color:#fff;user-select:none";
+    el.onclick=()=>svcSyncNow();document.body&&document.body.appendChild(el)}
+  const pend=Object.keys(svcPending).length||svcPlanDirty;
+  if(svcStatus.ok===null){el.style.background="#64748b";el.textContent="● conectando à nuvem…"}
+  else if(!svcStatus.ok){el.style.background="#dc2626";el.textContent="● sem nuvem — "+(svcStatus.err||"tentando de novo");}
+  else if(pend){el.style.background="#d97706";el.textContent="● enviando…"}
+  else{el.style.background="#16a34a";el.textContent="● ao vivo · "+svcStatus.at}
 }
+async function svcEnsureReady(){try{await svcEnsureSB()}catch(e){console.error("SVC Supabase lib",e)}if(!svcSB)throw new Error("sem conexão com a nuvem");return svcSB}
 async function svcLoadRemote(){
-  try{await svcEnsureSB()}catch(e){console.error("SVC Supabase lib",e);return null}
-  if(!svcSB)return null;
-  const {data,error}=await svcSB.from("svc_shared_state").select("payload").eq("state_key",SVC_STATE_KEY).maybeSingle();
-  if(error){console.error("SVC load",error);return null}
-  return data?.payload||null;
+  const c=await svcEnsureReady();
+  const {data,error}=await c.from("svc_shared_state").select("payload,updated_at").eq("state_key",SVC_STATE_KEY).maybeSingle();
+  if(error)throw error;
+  return data||null;
 }
-async function svcPatchRemote(patch){
+/* aplica no remoto só o que ESTE PC mudou desde a base (não apaga o que os outros PCs fizeram) */
+function svcMerge3(base,mine,remote){
+  const out={...(remote||{})};base=base||{};mine=mine||{};
+  const keys=new Set([...Object.keys(base),...Object.keys(mine)]);
+  keys.forEach(k=>{if(svcJ(base[k])!==svcJ(mine[k])){if(Object.prototype.hasOwnProperty.call(mine,k))out[k]=mine[k];else delete out[k]}});
+  return out;
+}
+/* um único ciclo: lê a nuvem, junta as mudanças locais pendentes, grava (se preciso) e aplica o resultado na tela */
+function svcSync(){
+  svcChain=svcChain.then(async()=>{
+    try{
+      const row=await svcLoadRemote();
+      const remote=(row&&row.payload)||{};
+      const pend=svcPending;svcPending={};
+      const planWasDirty=svcPlanDirty;svcPlanDirty=false;
+      const merged={...remote};
+      SVC_MAPS.forEach(k=>{if(Object.prototype.hasOwnProperty.call(pend,k))merged[k]=svcMerge3(svcBase&&svcBase[k],pend[k],remote[k])});
+      const lp=svcLocalPlan();
+      const localNewer=svcPlanTime(lp)>svcPlanTime(remote.plan);
+      if(localNewer)merged.plan=lp;
+      const mustWrite=!row||Object.keys(pend).length>0||localNewer;
+      if(mustWrite){
+        merged.updatedAt=new Date().toISOString();
+        if(!row&&!Object.keys(pend).length&&svcApplier){const loc=svcApplier.snapshot();SVC_MAPS.forEach(k=>{if(merged[k]==null)merged[k]=loc[k]})}
+        let error=null;
+        if(row&&row.updated_at){
+          /* grava só se ninguém gravou depois da leitura; se outro PC gravou no meio, lê de novo e junta (nada se perde) */
+          const r=await svcSB.from("svc_shared_state").update({payload:merged,updated_at:merged.updatedAt}).eq("state_key",SVC_STATE_KEY).eq("updated_at",row.updated_at).select("state_key");
+          if(!r.error&&(!r.data||!r.data.length)&&(svcSync._try=(svcSync._try||0)+1)<=4){
+            Object.keys(pend).forEach(k=>{if(!(k in svcPending))svcPending[k]=pend[k]});if(planWasDirty)svcPlanDirty=true;
+            setTimeout(svcSync,60+Math.random()*240);return;
+          }
+          if(r.error||!r.data||!r.data.length){const u=await svcSB.from("svc_shared_state").upsert({state_key:SVC_STATE_KEY,payload:merged,updated_at:merged.updatedAt},{onConflict:"state_key"});error=u.error}
+        }else{const u=await svcSB.from("svc_shared_state").upsert({state_key:SVC_STATE_KEY,payload:merged,updated_at:merged.updatedAt},{onConflict:"state_key"});error=u.error}
+        svcSync._try=0;
+        if(error){Object.keys(pend).forEach(k=>{if(!(k in svcPending))svcPending[k]=pend[k]});if(planWasDirty)svcPlanDirty=true;throw error}
+        svcLastRemoteAt=merged.updatedAt;
+        if(planWasDirty||localNewer)svcPlanSync(true);
+      }else svcLastRemoteAt=row.updated_at||"";
+      svcBase=merged;
+      svcRemoteReady=true;
+      /* mudanças feitas enquanto a gravação estava em andamento ficam pendentes; não sobrescreve a tela com elas */
+      const skip=new Set(Object.keys(svcPending));
+      if(svcApplier)svcApplier.apply(merged,skip);
+      svcCacheRemote(merged,skip);
+      svcSetStatus(true);
+    }catch(e){
+      console.error("SVC sync",e);svcSetStatus(false,String(e&&(e.message||e.code)||e).slice(0,60));
+      if(svcPlanDirty)svcPlanSync(false,String(e&&e.message||"erro ao salvar"));
+      clearTimeout(svcPushTimer);svcPushTimer=setTimeout(svcSync,5000);
+    }
+  });
+  return svcChain;
+}
+function svcSyncNow(){clearTimeout(svcPushTimer);return svcSync()}
+/* checagem leve: só baixa tudo se a nuvem mudou */
+async function svcCheck(){
+  if(!svcRemoteReady||Object.keys(svcPending).length||svcPlanDirty)return svcSyncNow();
+  try{const c=await svcEnsureReady();const {data,error}=await c.from("svc_shared_state").select("updated_at").eq("state_key",SVC_STATE_KEY).maybeSingle();
+    if(error)throw error;if(!data||data.updated_at!==svcLastRemoteAt)return svcSync();svcSetStatus(true)}
+  catch(e){svcSetStatus(false,String(e&&(e.message||e.code)||e).slice(0,60))}
+}
+function svcPatchRemote(patch){
   if(svcApplyingRemote)return;
-  try{await svcEnsureSB()}catch(e){return}
-  if(!svcSB)return;
-  clearTimeout(svcSaveTimer);
-  svcSaveTimer=setTimeout(async()=>{
-    const {data,error:readErr}=await svcSB.from("svc_shared_state").select("payload").eq("state_key",SVC_STATE_KEY).maybeSingle();
-    if(readErr){console.error("SVC read before save",readErr);return}
-    const payload={...(data?.payload||{}),...patch,updatedAt:new Date().toISOString()};
-    const lp=svcLocalPlan();if(svcPlanTime(lp)>svcPlanTime(payload.plan))payload.plan=lp;
-    const {error}=await svcSB.from("svc_shared_state").upsert(
-      {state_key:SVC_STATE_KEY,payload,updated_at:new Date().toISOString()},
-      {onConflict:"state_key"}
-    );
-    if(error)console.error("SVC save",error);
-  },650);
+  Object.assign(svcPending,patch);svcDrawBadge();
+  clearTimeout(svcPushTimer);svcPushTimer=setTimeout(svcSync,500);
 }
 const svcPlanSync=(ok,err)=>{window.__svcPlanSync={ok,err:err||"",at:new Date().toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})};window.dispatchEvent(new Event("svc-plan-sync"))};
-async function svcSavePlanRemote(plan){
+function svcSavePlanRemote(plan){
   if(svcApplyingRemote)return;
-  try{await svcEnsureSB()}catch(e){svcPlanSync(false,"sem conexão com a nuvem");return}
-  if(!svcSB){svcPlanSync(false,"sem conexão com a nuvem");return}
-  const {data,error:rErr}=await svcSB.from("svc_shared_state").select("payload").eq("state_key",SVC_STATE_KEY).maybeSingle();
-  if(rErr){console.error("SVC plan read",rErr);svcPlanSync(false,rErr.message||"erro ao ler a nuvem");return}
-  const payload={...(data?.payload||{}),plan,updatedAt:new Date().toISOString()};
-  const {error}=await svcSB.from("svc_shared_state").upsert(
-    {state_key:SVC_STATE_KEY,payload,updated_at:new Date().toISOString()},
-    {onConflict:"state_key"}
-  );
-  if(error){console.error("SVC plan save",error);svcPlanSync(false,error.message||"erro ao salvar")}else svcPlanSync(true);
+  svcPlanDirty=true;svcDrawBadge();
+  clearTimeout(svcPushTimer);svcPushTimer=setTimeout(svcSync,200);
 }
-function svcCacheRemote(p){
+function svcCacheRemote(p,skip){
+  skip=skip||new Set();
   try{
-    if(p.edits)localStorage.setItem("svc-edits",JSON.stringify(p.edits));
-    if(p.tagOv)localStorage.setItem("svc-tags",JSON.stringify(p.tagOv));
-    if(p.geos)localStorage.setItem("svc-geo9",JSON.stringify(p.geos));
-    if(p.readAt)localStorage.setItem("svc-read-at",JSON.stringify(p.readAt));
-    if(p.respAll)localStorage.setItem(RESP_KEY,JSON.stringify(p.respAll));
-    if(Object.prototype.hasOwnProperty.call(p,"plan")){
+    if(p.edits&&!skip.has("edits"))localStorage.setItem("svc-edits",JSON.stringify(p.edits));
+    if(p.tagOv&&!skip.has("tagOv"))localStorage.setItem("svc-tags",JSON.stringify(p.tagOv));
+    if(p.geos&&!skip.has("geos"))localStorage.setItem("svc-geo9",JSON.stringify(p.geos));
+    if(p.readAt&&!skip.has("readAt"))localStorage.setItem("svc-read-at",JSON.stringify(p.readAt));
+    if(p.respAll&&!skip.has("respAll"))localStorage.setItem(RESP_KEY,JSON.stringify(p.respAll));
+    if(Object.prototype.hasOwnProperty.call(p,"plan")&&!svcPlanDirty){
       const oldPlan=svcLocalPlan();
-      if(svcPlanTime(oldPlan)>svcPlanTime(p.plan)){const mine=oldPlan;setTimeout(()=>{svcApplyingRemote=false;svcSavePlanRemote(mine)},400)}
-      else if(JSON.stringify(oldPlan)!==JSON.stringify(p.plan)){
+      if(svcPlanTime(oldPlan)<=svcPlanTime(p.plan)&&JSON.stringify(oldPlan)!==JSON.stringify(p.plan)){
         if(p.plan==null)localStorage.removeItem("svc-plan2");
         else localStorage.setItem("svc-plan2",JSON.stringify(p.plan));
         window.dispatchEvent(new CustomEvent("svc-plan-remote",{detail:p.plan}));
@@ -2227,41 +2281,43 @@ function App(){
   const storeReadAt=o=>{setReadAt(o);try{localStorage.setItem("svc-read-at",JSON.stringify(o))}catch(e){}svcPatchRemote({readAt:o})};
   const [geos,setGeos]=useState(()=>{try{return JSON.parse(localStorage.getItem("svc-geo9")||"{}")}catch(e){return {}}});
   const [tagOv,setTagOv]=useState(()=>semData("svc-tags"));
-  const lastRemoteRef=useRef("");
-  const applyRemote=React.useCallback(p=>{
-    if(!p)return;
-    const sig=String(p.updatedAt||"");
-    if(sig&&lastRemoteRef.current===sig)return;
-    lastRemoteRef.current=sig;
+  const liveRef=useRef({});liveRef.current={edits,tagOv,geos,readAt,respAll};
+  const applyRemote=React.useCallback((p,skip)=>{
+    if(!p)return;skip=skip||new Set();
     svcApplyingRemote=true;
-    if(p.edits)setEdits(old=>JSON.stringify(old)===JSON.stringify(p.edits)?old:p.edits);
-    if(p.tagOv)setTagOv(old=>JSON.stringify(old)===JSON.stringify(p.tagOv)?old:p.tagOv);
-    if(p.geos)setGeos(old=>JSON.stringify(old)===JSON.stringify(p.geos)?old:p.geos);
-    if(p.readAt)setReadAt(old=>JSON.stringify(old)===JSON.stringify(p.readAt)?old:p.readAt);
-    if(p.respAll)setRespAll(old=>JSON.stringify(old)===JSON.stringify(p.respAll)?old:p.respAll);
-    svcCacheRemote(p);
-    setTimeout(()=>{svcApplyingRemote=false},120);
+    try{
+      if(p.edits&&!skip.has("edits"))setEdits(old=>JSON.stringify(old)===JSON.stringify(p.edits)?old:p.edits);
+      if(p.tagOv&&!skip.has("tagOv"))setTagOv(old=>JSON.stringify(old)===JSON.stringify(p.tagOv)?old:p.tagOv);
+      if(p.geos&&!skip.has("geos"))setGeos(old=>JSON.stringify(old)===JSON.stringify(p.geos)?old:p.geos);
+      if(p.readAt&&!skip.has("readAt"))setReadAt(old=>JSON.stringify(old)===JSON.stringify(p.readAt)?old:p.readAt);
+      if(p.respAll&&!skip.has("respAll"))setRespAll(old=>JSON.stringify(old)===JSON.stringify(p.respAll)?old:p.respAll);
+    }finally{svcApplyingRemote=false}
   },[]);
   useEffect(()=>{
-    let ch,alive=true;
-    const startOnline=async()=>{
-      try{
-        const p=await svcLoadRemote();
-        if(!alive)return;
-        if(p)applyRemote(p);
-        else await svcSB?.from("svc_shared_state").upsert({state_key:SVC_STATE_KEY,payload:svcSnapshot(edits,tagOv,geos,readAt,respAll),updated_at:new Date().toISOString()},{onConflict:"state_key"});
-        svcRemoteReady=true;
-        if(svcSB){
-          ch=svcSB.channel("svc-shared-state")
-            .on("postgres_changes",{event:"*",schema:"public",table:"svc_shared_state",filter:"state_key=eq."+SVC_STATE_KEY},payload=>{
-              const p2=payload.new?.payload;
-              if(p2&&document.visibilityState==="visible")applyRemote(p2);
-            }).subscribe();
-        }
-      }catch(e){console.error("SVC online",e)}
+    let ch=null,alive=true,iv=null;
+    /* base inicial = o que este PC tinha ao abrir; edições feitas antes de carregar a nuvem não apagam a nuvem */
+    svcBase={...liveRef.current};
+    svcApplier={apply:applyRemote,snapshot:()=>({...liveRef.current})};
+    svcDrawBadge();
+    const onVis=()=>{if(document.visibilityState==="visible")svcCheck()};
+    const onOnline=()=>svcSyncNow();
+    document.addEventListener("visibilitychange",onVis);window.addEventListener("focus",onVis);window.addEventListener("online",onOnline);
+    const subscribe=()=>{
+      if(!alive||!svcSB)return;
+      if(ch){try{svcSB.removeChannel(ch)}catch(e){}ch=null}
+      /* o aviso em tempo real só dispara a releitura: o conteúdo vem sempre do banco (o aviso pode vir cortado quando os dados são grandes) */
+      ch=svcSB.channel("svc-shared-state-"+Math.random().toString(36).slice(2,8))
+        .on("postgres_changes",{event:"*",schema:"public",table:"svc_shared_state",filter:"state_key=eq."+SVC_STATE_KEY},()=>{setTimeout(svcCheck,150)})
+        .subscribe(st=>{if(st==="CHANNEL_ERROR"||st==="TIMED_OUT"||st==="CLOSED"){if(alive)setTimeout(subscribe,5000)}else if(st==="SUBSCRIBED")svcCheck()});
     };
-    const tid=setTimeout(startOnline,4000);
-    return()=>{alive=false;clearTimeout(tid);if(ch)svcSB.removeChannel(ch)}
+    (async()=>{
+      await svcSyncNow();
+      if(!alive)return;
+      try{await svcEnsureReady();subscribe()}catch(e){}
+    })();
+    /* garantia extra: confere a nuvem a cada 8 s mesmo se o tempo real falhar */
+    iv=setInterval(()=>{if(document.visibilityState==="visible")svcCheck()},8000);
+    return()=>{alive=false;clearInterval(iv);document.removeEventListener("visibilitychange",onVis);window.removeEventListener("focus",onVis);window.removeEventListener("online",onOnline);if(ch&&svcSB)svcSB.removeChannel(ch);svcApplier=null}
   },[]);
 
   const storeTags=o=>{setTagOv(o);try{localStorage.setItem("svc-tags",JSON.stringify(o))}catch(e){}svcPatchRemote({tagOv:o})};
